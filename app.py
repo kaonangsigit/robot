@@ -11,6 +11,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from telebot.handler_backends import State, StatesGroup
 from telebot.storage import StateMemoryStorage
+from pywinauto.application import Application
+import pywinauto.keyboard as keyboard
 
 class ForexGoldAnalyzer:
     def __init__(self):
@@ -758,13 +760,10 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Inisialisasi MT5 dengan login otomatis (tanpa klik manual)
+        Inisialisasi MT5 dengan login otomatis menggunakan pywinauto
         """
         try:
             print("\n=== MULAI PROSES LOGIN MT5 ===")
-            print(f"Path MT5: {self.mt5_config['path']}")
-            print(f"Login ID: {self.mt5_config['login']}")
-            print(f"Server Input: {self.mt5_config['server']}")
             
             # Force shutdown MT5 terlebih dahulu
             if mt5.initialize():
@@ -772,46 +771,67 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
                 mt5.shutdown()
                 time.sleep(2)
             
-            # Inisialisasi MT5 dengan mode portable dan auto login
+            # Inisialisasi MT5 dasar
             print("\nMencoba inisialisasi MT5...")
             init_result = mt5.initialize(
-                path=self.mt5_config['path'],
-                login=int(self.mt5_config['login']),  # Pastikan login ID adalah integer
-                password=self.mt5_config['password'],
-                server=self.mt5_config['server'],
-                timeout=60000,  # Timeout lebih lama (60 detik)
-                portable=True,  # Mode portable
-                auto_login=True,  # Auto login aktif
-                auto_start=True  # Auto start terminal
+                path=self.mt5_config['path']
             )
             
             if not init_result:
-                print(f"❌ MT5 initialize failed. Error code: {mt5.last_error()}")
                 raise Exception(f"MT5 initialize failed: {mt5.last_error()}")
             
-            print("✅ MT5 initialized successfully")
-            
-            # Tunggu beberapa detik untuk memastikan koneksi
+            # Tunggu MT5 terbuka
             time.sleep(5)
             
-            # Verifikasi koneksi dan login
-            if not mt5.terminal_info():
-                raise Exception("MT5 terminal not connected")
-            
-            # Cek status login
-            account_info = mt5.account_info()
-            if account_info is None:
-                raise Exception("Failed to get account info")
-            
-            print("\n=== INFORMASI AKUN ===")
-            print(f"Login: {account_info.login}")
-            print(f"Server: {account_info.server}")
-            print(f"Balance: ${account_info.balance}")
-            print(f"Equity: ${account_info.equity}")
-            print(f"Company: {account_info.company}")
-            
-            return True
-            
+            try:
+                # Koneksikan ke window MT5
+                app = Application().connect(title_re="MetaTrader 5")
+                main_window = app.window(title_re="MetaTrader 5")
+                
+                # Fokus ke window
+                main_window.set_focus()
+                time.sleep(1)
+                
+                # Tekan Alt+F untuk menu File
+                keyboard.send_keys('%F')
+                time.sleep(0.5)
+                
+                # Tekan L untuk Login
+                keyboard.send_keys('L')
+                time.sleep(1)
+                
+                # Input login credentials
+                keyboard.send_keys(str(self.mt5_config['login']))
+                keyboard.send_keys('{TAB}')
+                keyboard.send_keys(self.mt5_config['password'])
+                keyboard.send_keys('{TAB}')
+                keyboard.send_keys(self.mt5_config['server'])
+                time.sleep(0.5)
+                
+                # Tekan Enter untuk login
+                keyboard.send_keys('{ENTER}')
+                
+                # Tunggu proses login
+                time.sleep(10)
+                
+                # Verifikasi login
+                account_info = mt5.account_info()
+                if account_info is None:
+                    raise Exception("Failed to get account info")
+                
+                print("\n=== INFORMASI AKUN ===")
+                print(f"Login: {account_info.login}")
+                print(f"Server: {account_info.server}")
+                print(f"Balance: ${account_info.balance}")
+                print(f"Equity: ${account_info.equity}")
+                print(f"Company: {account_info.company}")
+                
+                return True
+                
+            except Exception as e:
+                print(f"❌ Error automating login: {str(e)}")
+                return False
+                
         except Exception as e:
             print(f"\n❌ MT5 ERROR: {str(e)}")
             print(f"Last MT5 Error: {mt5.last_error()}")
