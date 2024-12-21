@@ -608,10 +608,21 @@ Gunakan /login untuk mencoba lagi.
                         return
                         
                     # Simpan server
-                    self.temp_credentials['server'] = message.text.strip()
+                    server_name = message.text.strip()
+                    
+                    # Hapus spasi berlebih dan normalisasi format
+                    server_name = ' '.join(server_name.split())
+                    
+                    self.temp_credentials['server'] = server_name
                     
                     # Update MT5 config
                     self.mt5_config.update(self.temp_credentials)
+                    
+                    # Info proses login
+                    bot.send_message(message.chat.id, """
+⏳ Mencoba login ke MT5...
+Mohon tunggu sebentar...
+                    """)
                     
                     # Coba login
                     login_result = self.initialize_mt5()
@@ -638,11 +649,19 @@ Kirim /help untuk melihat menu perintah.
                         
                     else:
                         self.login_status['login_attempts'] += 1
-                        bot.send_message(message.chat.id, """
+                        help_message = """
 ❌ Login gagal! 
-Silakan cek kembali kredensial Anda.
+
+Tips format nama server:
+- XMGlobal-MT5
+- XMGlobal-Demo
+- XMGlobal-Real
+- ICMarkets-Live
+- ICMarkets-Demo
+
 Gunakan /login untuk mencoba lagi.
-                        """)
+                        """
+                        bot.send_message(message.chat.id, help_message)
                     
                     # Hapus kredensial temporary
                     self.temp_credentials = {}
@@ -763,27 +782,51 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Inisialisasi dan login ke MT5
+        Perbaikan inisialisasi dan login ke MT5
         """
         try:
+            # Shutdown MT5 jika sudah berjalan
+            if mt5.initialize():
+                mt5.shutdown()
+            
+            # Inisialisasi ulang MT5
             if not mt5.initialize(path=self.mt5_config['path']):
                 raise Exception("MT5 initialize() failed")
                 
             # Login hanya jika ada kredensial
             if all(k in self.mt5_config for k in ['login', 'password', 'server']):
-                if not mt5.login(
-                    login=self.mt5_config['login'],
-                    password=self.mt5_config['password'],
-                    server=self.mt5_config['server']
-                ):
-                    raise Exception("MT5 login failed")
+                print(f"\nMencoba login ke server: {self.mt5_config['server']}")
                 
-                # Cek koneksi
-                account_info = mt5.account_info()
-                if account_info is None:
-                    raise Exception("Failed to get account info")
-                    
-                return True
+                # Coba login dengan beberapa variasi nama server
+                server_variations = [
+                    self.mt5_config['server'],
+                    self.mt5_config['server'].replace('-', ' '),
+                    self.mt5_config['server'].replace(' ', '-'),
+                    f"{self.mt5_config['server']}-Demo",
+                    f"{self.mt5_config['server']}-Live",
+                    f"{self.mt5_config['server']} Demo",
+                    f"{self.mt5_config['server']} Live"
+                ]
+                
+                for server in server_variations:
+                    print(f"Mencoba server: {server}")
+                    if mt5.login(
+                        login=self.mt5_config['login'],
+                        password=self.mt5_config['password'],
+                        server=server
+                    ):
+                        print(f"✅ Berhasil login ke server: {server}")
+                        # Update nama server yang berhasil
+                        self.mt5_config['server'] = server
+                        
+                        # Cek koneksi
+                        account_info = mt5.account_info()
+                        if account_info is None:
+                            raise Exception("Failed to get account info")
+                            
+                        return True
+                
+                raise Exception(f"Login gagal untuk semua variasi server")
                 
             return False
             
