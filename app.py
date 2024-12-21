@@ -19,9 +19,9 @@ class ForexGoldAnalyzer:
     def __init__(self):
         # Konfigurasi MT5
         self.mt5_config = {
-            'login': 307258870,  
-            'password': '@Onang2002',  
-            'server': 'XMGlobal-MT5 6',  
+            'login': ,  
+            'password': '',  
+            'server': '',  
             'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
         }
         
