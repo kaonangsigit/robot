@@ -228,7 +228,7 @@ Bot akan mengirim notifikasi otomatis untuk:
             def echo_all(message):
                 bot.reply_to(message, "Gunakan perintah /help untuk melihat perintah yang tersedia.")
 
-            print("�� Bot Telegram berhasil diinisialisasi")
+            print("✅ Bot Telegram berhasil diinisialisasi")
             
             # Mulai bot dalam thread terpisah
             import threading
@@ -931,35 +931,43 @@ Lot Size: {trade_info['lot_size']}
 
     def run_auto_trading(self):
         """
-        Menjalankan auto trading dengan fitur tambahan
+        Menjalankan analisis dan trading otomatis
         """
         try:
             print("\n=== MEMULAI AUTO TRADING ===")
             
-            # Cek sesi trading
-            session_ok, session_message = self.check_trading_session()
-            if not session_ok:
-                print(f"⚠️ {session_message}")
-                return
-            
-            # Update trailing stops untuk posisi yang ada
-            positions = mt5.positions_get()
-            if positions:
-                for position in positions:
-                    self.manage_trailing_stop(position)
-            
-            # Lanjutkan dengan analisis dan trading normal
-            # ... (kode existing) ...
-            
-            # Simpan data dan generate report
-            self.save_trading_data()
-            report = self.generate_report()
-            self.send_notification(f"Daily Report:\n{json.dumps(report, indent=2)}")
-            
+            # Analisis untuk setiap pair
+            for pair in self.forex_pairs + ([self.gold] if self.gold else []):
+                print(f"\nAnalisis {pair}...")
+                
+                # Mengumpulkan sinyal dari berbagai timeframe
+                signals = []
+                overall_strength = 0
+                
+                for tf_name, tf in self.timeframes.items():
+                    df = self.get_price_data(pair, tf)
+                    df = self.calculate_indicators(df)
+                    analysis = self.analyze_signals(df)
+                    
+                    signals.append({
+                        'timeframe': tf_name,
+                        'analysis': analysis
+                    })
+                    overall_strength += analysis['strength']
+                
+                print(f"Kekuatan Sinyal Total: {overall_strength}")
+                
+                # Manajemen trading berdasarkan sinyal
+                self.manage_trades(pair, signals, overall_strength)
+                
+                # Tampilkan history setelah setiap analisis
+                self.display_trade_history()
+                
         except Exception as e:
             error_msg = f"❌ Error dalam auto trading: {e}"
             print(error_msg)
-            self.send_notification(error_msg, type='error')
+            if hasattr(self, 'notifications') and self.notifications['telegram']['enabled']:
+                self.send_telegram(error_msg)
 
     def display_performance_metrics(self):
         """
