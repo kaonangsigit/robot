@@ -1,6 +1,6 @@
 import MetaTrader5 as mt5
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, time
 import time
 import numpy as np
 import os
@@ -13,35 +13,11 @@ from telebot.handler_backends import State, StatesGroup
 from telebot.storage import StateMemoryStorage
 from pywinauto.application import Application
 import pywinauto.keyboard as keyboard
+import threading
 
 class ForexGoldAnalyzer:
     def __init__(self):
-        self.forex_pairs = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCHF", "NZDUSD"]
-        self.gold_symbols = ["XAUUSD", "GOLD"]
-        self.gold = None
-        self.timeframes = {
-            "M5": mt5.TIMEFRAME_M5,
-            "M15": mt5.TIMEFRAME_M15,
-            "M30": mt5.TIMEFRAME_M30,
-            "H1": mt5.TIMEFRAME_H1,
-            "H4": mt5.TIMEFRAME_H4,
-            "D1": mt5.TIMEFRAME_D1
-        }
-        
-        # Inisialisasi trade history
-        self.trade_history = []
-        
-        # Setup notifikasi Telegram
-        self.notifications = {
-            'telegram': {
-                'enabled': True,
-                'token': 'isi token telegram',
-                'chat_id': 'isi chat id telegram',
-                'bot': None
-            }
-        }
-        
-        # Hapus kredensial hardcoded, ganti dengan temporary storage
+        # Konfigurasi MT5
         self.mt5_config = {
             'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
         }
@@ -53,111 +29,97 @@ class ForexGoldAnalyzer:
             'last_login': None
         }
         
-        # Temporary storage untuk proses login
-        self.temp_credentials = {}
-        
-        # Inisialisasi bot Telegram
-        if self.notifications['telegram']['enabled']:
-            self.initialize_telegram_bot()
-        
-        # Tambahan parameter untuk indikator
-        self.indicators = {
-            'ema_fast': 8,
-            'ema_medium': 21,
-            'ema_slow': 50,
-            'rsi_period': 14,
-            'macd_fast': 12,
-            'macd_slow': 26,
-            'macd_signal': 9,
-            'atr_period': 14
-        }
-        
-        # Parameter manajemen risiko
-        self.risk_params = {
-            'risk_percent': 1.0,  # Risiko 1% per trade
-            'max_daily_loss': 3.0,  # Maksimum loss harian 3%
-            'max_trades': 5,  # Maksimum trade per hari
-            'correlation_threshold': 0.7  # Batas korelasi antar pair
-        }
-        
-        # Tambahan parameter untuk filter market
-        self.market_filters = {
-            'min_volatility': 0.1,      # Minimum volatilitas untuk trading
-            'max_spread': 20,           # Maximum spread dalam pips
-            'trading_hours': {
-                'start': '07:00',       # Jam mulai (GMT+0)
-                'end': '21:00'          # Jam selesai (GMT+0)
-            },
-            'excluded_days': [5, 6]     # Tidak trading Sabtu-Minggu
-        }
-        
-        # Parameter untuk trailing stop
-        self.trailing_params = {
-            'enabled': True,
-            'activation_pips': 20,      # Aktifkan setelah profit 20 pips
-            'trailing_distance': 15      # Jarak trailing stop dalam pips
-        }
-        
-        # Performance tracking
-        self.performance = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_profit': 0,
-            'total_loss': 0,
-            'daily_profit_loss': 0,
-            'win_rate': 0
-        }
-        
         # Status bot
         self.bot_status = {
             'is_running': False,
             'start_time': None,
             'total_signals': 0,
-            'is_polling': False  # Tambahan status untuk polling
+            'is_polling': False
         }
         
-        # Command handler untuk Telegram
+        # Temporary storage untuk proses login
+        self.temp_credentials = {}
+        
+        # Setup notifikasi Telegram
+        self.notifications = {
+            'telegram': {
+                'enabled': True,
+                'token': 'YOUR_BOT_TOKEN',
+                'chat_id': 'YOUR_CHAT_ID',
+                'bot': None
+            }
+        }
+        
+        # Trading pairs
+        self.forex_pairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD']
+        
+        # Risk parameters
+        self.risk_params = {
+            'risk_percent': 1.0,
+            'max_daily_loss': 5.0,
+            'max_trades': 5,
+            'max_drawdown': 2.0  # dalam persen
+        }
+        
+        # Initialize Telegram bot
         if self.notifications['telegram']['enabled']:
-            self.setup_telegram_commands()
+            self.initialize_telegram_bot()
+
+        # Market filters
+        self.market_filters = {
+            'trading_hours': {'start': time(9,0), 'end': time(17,0)},
+            'max_spread': 3.0  # dalam pips
+        }
+
+        # Trailing parameters
+        self.trailing_params = {
+            'enabled': True,
+            'start_pips': 20,
+            'step_pips': 10,
+            'min_step': 5
+        }
 
     def initialize_telegram_bot(self):
+        """
+        Inisialisasi bot Telegram
+        """
         try:
             bot = telebot.TeleBot(self.notifications['telegram']['token'])
             self.notifications['telegram']['bot'] = bot
-            print("✅ Bot Telegram berhasil diinisialisasi")
-        except Exception as e:
-            print(f"❌ Error inisialisasi bot Telegram: {e}")
-            self.notifications['telegram']['enabled'] = False
-
-    def send_telegram(self, message):
-        try:
-            if not self.notifications['telegram']['enabled']:
-                return
-                
-            bot = self.notifications['telegram']['bot']
-            chat_id = self.notifications['telegram']['chat_id']
-            
-            bot.send_message(chat_id, message)
-            print("✅ Pesan Telegram terkirim")
-            
-        except Exception as e:
-            print(f"❌ Error mengirim pesan Telegram: {e}")
-
-    def test_telegram_connection(self):
-        try:
-            test_message = """
-🤖 Bot Trading berhasil terhubung!
-
-⚡️ Status: Active
-📊 Mode: Auto Trading
-⏰ Time: {}
-            """.format(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-            
-            self.send_telegram(test_message)
+            self.setup_telegram_commands()
             return True
         except Exception as e:
-            print(f"❌ Error test koneksi Telegram: {e}")
+            print(f"❌ Error initializing Telegram bot: {e}")
+            return False
+
+    def test_telegram_connection(self):
+        """
+        Test koneksi Telegram
+        """
+        try:
+            bot = self.notifications['telegram']['bot']
+            if bot.get_me():
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Telegram connection error: {e}")
+            return False
+
+    def send_telegram(self, message):
+        """
+        Kirim pesan ke Telegram
+        """
+        try:
+            if self.notifications['telegram']['enabled']:
+                bot = self.notifications['telegram']['bot']
+                bot.send_message(
+                    self.notifications['telegram']['chat_id'],
+                    message
+                )
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error sending Telegram message: {e}")
             return False
 
     def display_trade_history(self):
@@ -276,91 +238,139 @@ class ForexGoldAnalyzer:
 
     def calculate_position_size(self, symbol, stop_loss_pips):
         """
-        Menghitung ukuran posisi berdasarkan risiko
+        Hitung ukuran posisi dengan risk 1% dari modal
         """
         try:
             account_info = mt5.account_info()
             if account_info is None:
-                raise Exception("Tidak dapat mendapatkan informasi akun")
-                
-            balance = account_info.balance
-            risk_amount = balance * (self.risk_params['risk_percent'] / 100)
+                return 0.01  # Default minimal lot
             
+            # Risk 1% dari balance
+            risk_amount = account_info.balance * 0.01  # 1% risk per trade
+            
+            # Hitung nilai per pip
             symbol_info = mt5.symbol_info(symbol)
-            if symbol_info is None:
-                raise Exception(f"Tidak dapat mendapatkan informasi symbol {symbol}")
-                
-            pip_value = symbol_info.trade_tick_value
-            pip_risk = stop_loss_pips * pip_value
+            pip_value = symbol_info.trade_tick_value * (10 if symbol_info.digits == 3 else 1)
             
-            lot_size = risk_amount / pip_risk
-            lot_size = round(lot_size, 2)  # Round to 2 decimal places
+            # Hitung lot size berdasarkan risk
+            lot_size = risk_amount / (stop_loss_pips * pip_value)
             
-            # Pastikan lot size dalam batas yang diizinkan
-            if lot_size < symbol_info.volume_min:
-                lot_size = symbol_info.volume_min
-            elif lot_size > symbol_info.volume_max:
-                lot_size = symbol_info.volume_max
-                
+            # Round dan batasi lot size
+            lot_size = round(lot_size, 2)
+            lot_size = max(0.01, min(lot_size, symbol_info.volume_max))
+            
             return lot_size
             
         except Exception as e:
-            print(f"❌ Error menghitung position size: {e}")
-            return 0.01  # Default minimal lot size
+            print(f"❌ Error calculating position size: {e}")
+            return 0.01
 
-    def execute_trade(self, symbol, trade_type, lot_size, sl_price, tp_price):
+    def execute_trade(self, signal):
         """
-        Eksekusi order trading
+        Eksekusi trading dengan risk management ketat
         """
         try:
+            symbol = signal['symbol']  # Perbaikan dari signal['action']
+            action = signal['action']
+            
+            # Cek jumlah posisi terbuka
+            positions = mt5.positions_get()
+            if len(positions) >= self.risk_params['max_trades']:
+                self.send_telegram("⚠️ Maksimum jumlah trade tercapai")
+                return False
+            
+            # Cek total floating loss
+            total_loss = 0
+            for pos in positions:
+                if pos.profit < 0:
+                    total_loss += abs(pos.profit)
+            
+            # Cek jika total kerugian sudah mencapai 1% dari modal
+            account_info = mt5.account_info()
+            max_loss = account_info.balance * 0.01  # 1% dari modal
+            
+            if total_loss >= max_loss:
+                self.send_telegram(f"""
+⚠️ Trading dihentikan!
+Total kerugian telah mencapai batas 1% dari modal
+Loss: ${total_loss:.2f}
+Max Loss: ${max_loss:.2f}
+                """)
+                self.bot_status['is_running'] = False
+                return False
+            
+            # Setup order dengan SL yang ketat
+            symbol_info = mt5.symbol_info(symbol)
+            point = symbol_info.point
+            
+            if action == 'BUY':
+                order_type = mt5.ORDER_TYPE_BUY
+                price = mt5.symbol_info_tick(symbol).ask
+                sl = price - (30 * point)  # 30 pips SL
+                tp = price + (60 * point)  # 60 pips TP (1:2 risk:reward)
+            else:
+                order_type = mt5.ORDER_TYPE_SELL
+                price = mt5.symbol_info_tick(symbol).bid
+                sl = price + (30 * point)
+                tp = price - (60 * point)
+            
+            # Hitung position size berdasarkan 1% risk
+            volume = self.calculate_position_size(symbol, 30)  # 30 pips SL
+            
+            # Kirim detail order ke Telegram
+            order_details = f"""
+🔄 MEMBUKA POSISI
+
+Symbol: {symbol}
+Type: {action}
+Volume: {volume}
+Entry: {price:.5f}
+SL: {sl:.5f}
+TP: {tp:.5f}
+Risk: 1% (${max_loss:.2f})
+            """
+            self.send_telegram(order_details)
+            
+            # Buat request
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": lot_size,
-                "type": mt5.ORDER_TYPE_BUY if trade_type == "BUY" else mt5.ORDER_TYPE_SELL,
-                "price": mt5.symbol_info_tick(symbol).ask if trade_type == "BUY" else mt5.symbol_info_tick(symbol).bid,
-                "sl": sl_price,
-                "tp": tp_price,
-                "deviation": 20,
+                "volume": volume,
+                "type": order_type,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "deviation": 10,
                 "magic": 234000,
-                "comment": "python script open",
+                "comment": "risk_1_percent",
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILLING_IOC,
             }
             
+            # Kirim order
             result = mt5.order_send(request)
             if result.retcode != mt5.TRADE_RETCODE_DONE:
-                raise Exception(f"Order gagal dengan error code: {result.retcode}")
-                
-            # Tambahkan ke history
-            trade_info = {
-                'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'symbol': symbol,
-                'type': trade_type,
-                'lot_size': lot_size,
-                'entry': request['price'],
-                'sl': sl_price,
-                'tp': tp_price,
-                'ticket': result.order
-            }
-            self.trade_history.append(trade_info)
+                self.send_telegram(f"❌ Order gagal: {result.comment}")
+                return False
             
-            # Kirim notifikasi
-            self.send_telegram(f"""
-🔵 TRADE EXECUTED
+            # Kirim konfirmasi order berhasil
+            success_msg = f"""
+✅ ORDER BERHASIL!
+
 Symbol: {symbol}
-Type: {trade_type}
-Lot: {lot_size}
-Entry: {request['price']}
-SL: {sl_price}
-TP: {tp_price}
-Ticket: {result.order}
-            """)
-            
+Type: {action}
+Volume: {volume}
+Entry: {price:.5f}
+SL: {sl:.5f}
+TP: {tp:.5f}
+            """
+            self.send_telegram(success_msg)
             return True
             
         except Exception as e:
-            print(f"❌ Error eksekusi trade: {e}")
+            error_msg = f"❌ Error executing trade: {e}"
+            print(error_msg)
+            self.send_telegram(error_msg)
             return False
 
     def check_market_conditions(self, symbol):
@@ -669,72 +679,64 @@ Gunakan /login untuk mencoba lagi.
                 except Exception as e:
                     bot.reply_to(message, f"❌ Error logout: {e}")
 
-            @bot.message_handler(commands=['status'])
-            def check_status(message):
+            @bot.message_handler(commands=['status', 'balance', 'positions'])
+            def check_info(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
                     return
                 
-                # Update status untuk menampilkan info login
-                status = "🟢 Running" if self.bot_status['is_running'] else "🔴 Stopped"
-                login_status = "🟢 Connected" if self.login_status['is_logged_in'] else "🔴 Disconnected"
-                last_login = self.login_status['last_login'].strftime('%Y-%m-%d %H:%M:%S') if self.login_status['last_login'] else "Never"
+                command = message.text[1:]  # Hapus '/' dari command
                 
-                status_text = f"""
+                if command == 'status':
+                    status = "🟢 Running" if self.bot_status['is_running'] else "🔴 Stopped"
+                    login_status = "🟢 Connected" if self.login_status['is_logged_in'] else "🔴 Disconnected"
+                    runtime = datetime.now() - self.bot_status['start_time'] if self.bot_status['start_time'] else "N/A"
+                    
+                    status_text = f"""
 📊 STATUS BOT TRADING
 
 Bot Status: {status}
 MT5 Connection: {login_status}
-Last Login: {last_login}
-Running Time: {datetime.now() - self.bot_status['start_time'] if self.bot_status['start_time'] else 'N/A'}
+Running Time: {runtime}
 Total Signals: {self.bot_status['total_signals']}
 Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                """
-                bot.reply_to(message, status_text)
-
-            @bot.message_handler(commands=['balance'])
-            def check_balance(message):
-                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    return
+                    """
+                    bot.send_message(message.chat.id, status_text)
                     
-                account = mt5.account_info()
-                if account is None:
-                    bot.reply_to(message, "❌ Error mendapatkan info balance")
-                    return
-                    
-                balance_text = f"""
+                elif command == 'balance':
+                    account = mt5.account_info()
+                    if account is None:
+                        bot.send_message(message.chat.id, "❌ Error mendapatkan info balance")
+                        return
+                        
+                    balance_text = f"""
 💰 ACCOUNT BALANCE
 
 Balance: ${account.balance:.2f}
 Equity: ${account.equity:.2f}
 Profit: ${account.profit:.2f}
 Margin Level: {account.margin_level:.2f}%
-                """
-                bot.reply_to(message, balance_text)
-
-            @bot.message_handler(commands=['positions'])
-            def check_positions(message):
-                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    return
+                    """
+                    bot.send_message(message.chat.id, balance_text)
                     
-                positions = mt5.positions_get()
-                if positions is None or len(positions) == 0:
-                    bot.reply_to(message, "📊 Tidak ada posisi terbuka")
-                    return
-                    
-                positions_text = "📊 POSISI TERBUKA\n\n"
-                for pos in positions:
-                    positions_text += f"""
+                elif command == 'positions':
+                    positions = mt5.positions_get()
+                    if positions is None or len(positions) == 0:
+                        bot.send_message(message.chat.id, "📊 Tidak ada posisi terbuka")
+                        return
+                        
+                    positions_text = "📊 POSISI TERBUKA\n\n"
+                    for pos in positions:
+                        positions_text += f"""
 Symbol: {pos.symbol}
 Type: {'BUY' if pos.type == 0 else 'SELL'}
 Volume: {pos.volume}
-Open Price: {pos.price_open}
-Current Price: {pos.price_current}
-SL: {pos.sl}
-TP: {pos.tp}
-Profit: ${pos.profit}
-                    """
-                
-                bot.reply_to(message, positions_text)
+Open Price: {pos.price_open:.5f}
+Current Price: {pos.price_current:.5f}
+SL: {pos.sl:.5f}
+TP: {pos.tp:.5f}
+Profit: ${pos.profit:.2f}
+                        """
+                    bot.send_message(message.chat.id, positions_text)
 
             @bot.message_handler(commands=['settings'])
             def show_settings(message):
@@ -921,6 +923,301 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             print(error_msg)
             self.send_telegram(error_msg)
             self.bot_status['is_running'] = False
+
+    def analyze_market(self, symbol):
+        """
+        Analisa pasar menggunakan multiple timeframe dan indikator
+        """
+        try:
+            # Timeframes yang akan dianalisa
+            timeframes = [mt5.TIMEFRAME_M5, mt5.TIMEFRAME_M15, mt5.TIMEFRAME_H1]
+            
+            signals = {tf: None for tf in timeframes}
+            
+            for tf in timeframes:
+                # Ambil data historis
+                rates = mt5.copy_rates_from_pos(symbol, tf, 0, 100)
+                if rates is None:
+                    continue
+                
+                # Convert ke array untuk perhitungan
+                close = rates['close']
+                high = rates['high']
+                low = rates['low']
+                
+                # === INDIKATOR TEKNIKAL ===
+                
+                # 1. Moving Averages
+                ma_fast = self.calculate_ma(close, 20)
+                ma_slow = self.calculate_ma(close, 50)
+                
+                # 2. RSI
+                rsi = self.calculate_rsi(close, 14)
+                
+                # 3. Bollinger Bands
+                bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(close, 20, 2)
+                
+                # 4. MACD
+                macd, signal = self.calculate_macd(close)
+                
+                # === ANALISA SINYAL ===
+                
+                # Trend Analysis
+                trend = "UP" if ma_fast[-1] > ma_slow[-1] else "DOWN"
+                
+                # Momentum
+                momentum = "STRONG" if abs(rsi[-1] - 50) > 20 else "WEAK"
+                
+                # Volatility
+                volatility = "HIGH" if (bb_upper[-1] - bb_lower[-1])/bb_middle[-1] > 0.02 else "LOW"
+                
+                # Entry Points
+                if trend == "UP" and rsi[-1] < 70:  # Potential Buy
+                    if close[-1] > ma_fast[-1] and macd[-1] > signal[-1]:
+                        signals[tf] = "BUY"
+                elif trend == "DOWN" and rsi[-1] > 30:  # Potential Sell
+                    if close[-1] < ma_fast[-1] and macd[-1] < signal[-1]:
+                        signals[tf] = "SELL"
+            
+            # === KONFIRMASI MULTI TIMEFRAME ===
+            buy_signals = sum(1 for s in signals.values() if s == "BUY")
+            sell_signals = sum(1 for s in signals.values() if s == "SELL")
+            
+            # Keputusan final
+            if buy_signals >= 2:  # Minimal 2 timeframe konfirmasi
+                return {
+                    'action': 'BUY',
+                    'symbol': symbol,
+                    'confidence': buy_signals/len(timeframes)
+                }
+            elif sell_signals >= 2:
+                return {
+                    'action': 'SELL',
+                    'symbol': symbol,
+                    'confidence': sell_signals/len(timeframes)
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error analyzing market: {e}")
+            return None
+
+    def calculate_ma(self, close, period):
+        """
+        Menghitung Moving Average
+        """
+        import numpy as np
+        return np.convolve(close, np.ones(period), 'valid') / period
+
+    def calculate_rsi(self, close, period=14):
+        """
+        Menghitung RSI (Relative Strength Index)
+        """
+        import numpy as np
+        
+        # Hitung perubahan harga
+        delta = np.diff(close)
+        
+        # Pisahkan gain dan loss
+        gain = np.where(delta > 0, delta, 0)
+        loss = np.where(delta < 0, -delta, 0)
+        
+        # Hitung average gain dan loss
+        avg_gain = np.convolve(gain, np.ones(period), 'valid') / period
+        avg_loss = np.convolve(loss, np.ones(period), 'valid') / period
+        
+        # Hitung RS dan RSI
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+
+    def calculate_bollinger_bands(self, close, period=20, std_dev=2):
+        """
+        Menghitung Bollinger Bands
+        """
+        import numpy as np
+        
+        # Hitung MA dan Standard Deviation
+        ma = self.calculate_ma(close, period)
+        std = np.std(close[-period:])
+        
+        # Hitung bands
+        upper_band = ma + (std_dev * std)
+        lower_band = ma - (std_dev * std)
+        
+        return upper_band, ma, lower_band
+
+    def calculate_macd(self, close, fast=12, slow=26, signal=9):
+        """
+        Menghitung MACD (Moving Average Convergence Divergence)
+        """
+        import numpy as np
+        
+        # Hitung EMA
+        ema_fast = self.calculate_ema(close, fast)
+        ema_slow = self.calculate_ema(close, slow)
+        
+        # Hitung MACD line
+        macd_line = ema_fast - ema_slow
+        
+        # Hitung signal line
+        signal_line = self.calculate_ema(macd_line, signal)
+        
+        return macd_line, signal_line
+
+    def calculate_ema(self, data, period):
+        """
+        Menghitung Exponential Moving Average
+        """
+        import numpy as np
+        
+        multiplier = 2 / (period + 1)
+        ema = [data[0]]
+        
+        for price in data[1:]:
+            ema.append((price * multiplier) + (ema[-1] * (1 - multiplier)))
+            
+        return np.array(ema)
+
+    def check_market_conditions(self):
+        """
+        Cek kondisi pasar sebelum trading
+        """
+        try:
+            current_time = datetime.now().time()
+            
+            # Cek jam trading
+            if not (self.market_filters['trading_hours']['start'] <= 
+                   current_time <= 
+                   self.market_filters['trading_hours']['end']):
+                return False, "Di luar jam trading"
+            
+            # Cek high impact news
+            if self.check_economic_calendar():
+                return False, "Ada high impact news"
+            
+            # Cek spread
+            for symbol in self.forex_pairs:
+                tick = mt5.symbol_info_tick(symbol)
+                spread = (tick.ask - tick.bid) / tick.bid * 10000
+                
+                if spread > self.market_filters['max_spread']:
+                    return False, f"Spread terlalu tinggi pada {symbol}"
+            
+            return True, "Market conditions OK"
+            
+        except Exception as e:
+            return False, f"Error checking market conditions: {e}"
+
+    def check_economic_calendar(self):
+        """
+        Cek economic calendar untuk high impact news
+        """
+        # Implementasi cek kalender ekonomi
+        # Bisa menggunakan API dari forexfactory atau investing.com
+        return False
+
+    def trailing_stop(self, position):
+        """
+        Update trailing stop untuk posisi yang profit
+        """
+        try:
+            if not self.trailing_params['enabled']:
+                return
+            
+            symbol_info = mt5.symbol_info(position.symbol)
+            point = symbol_info.point
+            
+            # Hitung profit dalam pips
+            profit_pips = position.profit / (symbol_info.trade_tick_value * position.volume)
+            
+            if profit_pips >= self.trailing_params['start_pips']:
+                new_sl = None
+                
+                if position.type == mt5.ORDER_TYPE_BUY:
+                    potential_sl = position.price_current - (self.trailing_params['step_pips'] * point)
+                    if potential_sl > position.sl + (self.trailing_params['min_step'] * point):
+                        new_sl = potential_sl
+                else:
+                    potential_sl = position.price_current + (self.trailing_params['step_pips'] * point)
+                    if potential_sl < position.sl - (self.trailing_params['min_step'] * point):
+                        new_sl = potential_sl
+                
+                if new_sl:
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "symbol": position.symbol,
+                        "position": position.ticket,
+                        "sl": new_sl,
+                        "tp": position.tp
+                    }
+                    
+                    result = mt5.order_send(request)
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        self.send_telegram(f"""
+🔄 TRAILING STOP UPDATE
+Ticket: {position.ticket}
+Symbol: {position.symbol}
+New SL: {new_sl:.5f}
+                        """)
+                        
+        except Exception as e:
+            print(f"❌ Error updating trailing stop: {e}")
+
+    def monitor_positions(self):
+        """
+        Monitor posisi terbuka dan update trailing stop
+        """
+        try:
+            positions = mt5.positions_get()
+            if positions:
+                for position in positions:
+                    # Update trailing stop
+                    self.trailing_stop(position)
+                    
+                    # Cek drawdown
+                    if position.profit < 0:
+                        drawdown = abs(position.profit) / mt5.account_info().balance * 100
+                        if drawdown >= self.risk_params['max_drawdown']:
+                            self.close_position(position)
+                            self.send_telegram(f"""
+⚠️ POSISI DITUTUP - MAX DRAWDOWN
+Ticket: {position.ticket}
+Symbol: {position.symbol}
+Loss: ${position.profit:.2f}
+Drawdown: {drawdown:.2f}%
+                            """)
+                            
+        except Exception as e:
+            print(f"❌ Error monitoring positions: {e}")
+
+    def close_position(self, position):
+        """
+        Tutup posisi trading
+        """
+        try:
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": position.symbol,
+                "type": mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+                "position": position.ticket,
+                "volume": position.volume,
+                "price": mt5.symbol_info_tick(position.symbol).bid if position.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(position.symbol).ask,
+                "deviation": 10,
+                "magic": 234000,
+                "comment": "close_by_bot",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            
+            result = mt5.order_send(request)
+            return result.retcode == mt5.TRADE_RETCODE_DONE
+            
+        except Exception as e:
+            print(f"❌ Error closing position: {e}")
+            return False
 
 def main():
     # Initialize analyzer
