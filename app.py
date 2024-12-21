@@ -758,7 +758,7 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Perbaikan inisialisasi MT5 dengan login otomatis
+        Inisialisasi MT5 dengan login otomatis (tanpa klik manual)
         """
         try:
             print("\n=== MULAI PROSES LOGIN MT5 ===")
@@ -772,16 +772,17 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
                 mt5.shutdown()
                 time.sleep(2)
             
-            # Inisialisasi MT5 dengan mode portable
+            # Inisialisasi MT5 dengan mode portable dan auto login
             print("\nMencoba inisialisasi MT5...")
             init_result = mt5.initialize(
                 path=self.mt5_config['path'],
-                login=self.mt5_config['login'],
+                login=int(self.mt5_config['login']),  # Pastikan login ID adalah integer
                 password=self.mt5_config['password'],
                 server=self.mt5_config['server'],
-                timeout=30000,
-                portable=True,  # Gunakan mode portable
-                auto_login=True  # Aktifkan auto login
+                timeout=60000,  # Timeout lebih lama (60 detik)
+                portable=True,  # Mode portable
+                auto_login=True,  # Auto login aktif
+                auto_start=True  # Auto start terminal
             )
             
             if not init_result:
@@ -793,72 +794,23 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             # Tunggu beberapa detik untuk memastikan koneksi
             time.sleep(5)
             
-            # Coba login langsung dengan kredensial
-            login_result = mt5.login(
-                login=self.mt5_config['login'],
-                password=self.mt5_config['password'],
-                server=self.mt5_config['server']
-            )
+            # Verifikasi koneksi dan login
+            if not mt5.terminal_info():
+                raise Exception("MT5 terminal not connected")
             
-            if login_result:
-                print("✅ Login berhasil!")
-                
-                # Verifikasi koneksi
-                account_info = mt5.account_info()
-                if account_info is not None:
-                    print("\n=== INFORMASI AKUN ===")
-                    print(f"Login: {account_info.login}")
-                    print(f"Server: {account_info.server}")
-                    print(f"Balance: ${account_info.balance}")
-                    print(f"Equity: ${account_info.equity}")
-                    print(f"Company: {account_info.company}")
-                    return True
-                    
-            else:
-                # Jika login langsung gagal, coba dengan variasi server
-                server_base = self.mt5_config['server'].split()[0]
-                server_number = ''.join(filter(str.isdigit, self.mt5_config['server']))
-                
-                server_variations = [
-                    self.mt5_config['server'],
-                    f"{server_base}-{server_number}",
-                    f"{server_base} {server_number}",
-                    f"{server_base}{server_number}",
-                    f"{server_base}-MT5-{server_number}",
-                    f"{server_base}-MT5 {server_number}",
-                    f"{server_base} MT5 {server_number}"
-                ]
-                
-                print("\nMencoba login dengan variasi server:")
-                for server in server_variations:
-                    print(f"\nTrying server: {server}")
-                    try:
-                        login_result = mt5.login(
-                            login=self.mt5_config['login'],
-                            password=self.mt5_config['password'],
-                            server=server,
-                            timeout=30000
-                        )
-                        
-                        if login_result:
-                            print(f"✅ Login berhasil ke server: {server}")
-                            self.mt5_config['server'] = server
-                            
-                            account_info = mt5.account_info()
-                            if account_info is not None:
-                                print("\n=== INFORMASI AKUN ===")
-                                print(f"Login: {account_info.login}")
-                                print(f"Server: {account_info.server}")
-                                print(f"Balance: ${account_info.balance}")
-                                print(f"Equity: ${account_info.equity}")
-                                print(f"Company: {account_info.company}")
-                                return True
-                                
-                    except Exception as e:
-                        print(f"❌ Error mencoba server {server}: {str(e)}")
-                        continue
+            # Cek status login
+            account_info = mt5.account_info()
+            if account_info is None:
+                raise Exception("Failed to get account info")
             
-            raise Exception("Gagal login ke semua variasi server")
+            print("\n=== INFORMASI AKUN ===")
+            print(f"Login: {account_info.login}")
+            print(f"Server: {account_info.server}")
+            print(f"Balance: ${account_info.balance}")
+            print(f"Equity: ${account_info.equity}")
+            print(f"Company: {account_info.company}")
+            
+            return True
             
         except Exception as e:
             print(f"\n❌ MT5 ERROR: {str(e)}")
