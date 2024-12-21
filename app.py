@@ -527,18 +527,18 @@ Gunakan /stop untuk menghentikan bot
             @bot.message_handler(commands=['login'])
             def start_login(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    bot.reply_to(message, "❌ Anda tidak memiliki akses.")
+                    bot.send_message(message.chat.id, "❌ Anda tidak memiliki akses.")
                     return
                 
                 if self.login_status['is_logged_in']:
-                    bot.reply_to(message, "⚠️ Sudah login ke MT5!")
+                    bot.send_message(message.chat.id, "⚠️ Sudah login ke MT5!")
                     return
                 
                 # Reset temporary credentials
                 self.temp_credentials = {}
                 
                 # Minta login ID
-                msg = bot.reply_to(message, """
+                msg = bot.send_message(message.chat.id, """
 🔐 Proses Login MT5
 
 Silakan kirim Login ID MT5 Anda:
@@ -549,14 +549,14 @@ Silakan kirim Login ID MT5 Anda:
             def process_login_id(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.reply_to(message, "✅ Proses login dibatalkan.")
+                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
                         return
                         
                     login_id = int(message.text.strip())
                     self.temp_credentials['login'] = login_id
                     
                     # Minta password
-                    msg = bot.reply_to(message, """
+                    msg = bot.send_message(message.chat.id, """
 🔑 Masukkan Password MT5:
 (Pesan akan dihapus setelah diproses)
 (Ketik 'cancel' untuk membatalkan)
@@ -564,7 +564,7 @@ Silakan kirim Login ID MT5 Anda:
                     bot.register_next_step_handler(msg, process_password)
                     
                 except ValueError:
-                    bot.reply_to(message, """
+                    bot.send_message(message.chat.id, """
 ❌ Login ID harus berupa angka!
 Gunakan /login untuk mencoba lagi.
                     """)
@@ -573,19 +573,24 @@ Gunakan /login untuk mencoba lagi.
             def process_password(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.reply_to(message, "✅ Proses login dibatalkan.")
-                        # Hapus pesan untuk keamanan
-                        bot.delete_message(message.chat.id, message.message_id)
+                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
+                        try:
+                            bot.delete_message(message.chat.id, message.message_id)
+                        except:
+                            pass
                         return
                         
                     # Simpan password
                     self.temp_credentials['password'] = message.text.strip()
                     
                     # Hapus pesan password untuk keamanan
-                    bot.delete_message(message.chat.id, message.message_id)
+                    try:
+                        bot.delete_message(message.chat.id, message.message_id)
+                    except:
+                        pass
                     
                     # Minta nama server
-                    msg = bot.reply_to(message, """
+                    msg = bot.send_message(message.chat.id, """
 🏢 Masukkan Nama Server MT5:
 (Contoh: XMTrading-Demo, ICMarkets-Live)
 (Ketik 'cancel' untuk membatalkan)
@@ -593,13 +598,13 @@ Gunakan /login untuk mencoba lagi.
                     bot.register_next_step_handler(msg, process_server)
                     
                 except Exception as e:
-                    bot.reply_to(message, f"❌ Error: {e}")
+                    bot.send_message(message.chat.id, f"❌ Error: {e}")
                     return
 
             def process_server(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.reply_to(message, "✅ Proses login dibatalkan.")
+                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
                         return
                         
                     # Simpan server
@@ -629,11 +634,11 @@ Gunakan /login untuk mencoba lagi.
 Bot siap digunakan!
 Kirim /help untuk melihat menu perintah.
                         """
-                        bot.reply_to(message, success_message)
+                        bot.send_message(message.chat.id, success_message)
                         
                     else:
                         self.login_status['login_attempts'] += 1
-                        bot.reply_to(message, """
+                        bot.send_message(message.chat.id, """
 ❌ Login gagal! 
 Silakan cek kembali kredensial Anda.
 Gunakan /login untuk mencoba lagi.
@@ -645,7 +650,7 @@ Gunakan /login untuk mencoba lagi.
                     self.mt5_config.pop('password', None)
                     
                 except Exception as e:
-                    bot.reply_to(message, f"❌ Error: {e}")
+                    bot.send_message(message.chat.id, f"❌ Error: {e}")
                     return
 
             @bot.message_handler(commands=['logout'])
