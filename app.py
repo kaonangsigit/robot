@@ -19,7 +19,10 @@ class ForexGoldAnalyzer:
     def __init__(self):
         # Konfigurasi MT5
         self.mt5_config = {
-            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
+            'login': ,  # Ganti dengan login ID Anda
+            'password': '',  # Ganti dengan password Anda
+            'server': '',  # Ganti dengan server broker Anda
+            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'  # Sesuaikan path MT5
         }
         
         # Status login
@@ -132,6 +135,9 @@ class ForexGoldAnalyzer:
             'step_pips': 10,
             'min_step': 5
         }
+
+        # Inisialisasi MT5 saat startup
+        self.initialize_mt5()
 
     def initialize_telegram_bot(self):
         """
@@ -816,100 +822,113 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Inisialisasi MT5 dengan login otomatis menggunakan pywinauto
+        Inisialisasi dan login ke MT5
         """
         try:
             print("\n=== MULAI PROSES LOGIN MT5 ===")
             
-            # Force shutdown MT5 terlebih dahulu
+            # Shutdown MT5 jika sudah berjalan
             if mt5.initialize():
-                print("Shutting down existing MT5 connection...")
+                print("Menutup koneksi MT5 yang ada...")
                 mt5.shutdown()
                 time.sleep(2)
             
-            # Inisialisasi MT5 dasar
+            # Inisialisasi MT5
             print("\nMencoba inisialisasi MT5...")
             init_result = mt5.initialize(
-                path=self.mt5_config['path']
+                path=self.mt5_config['path'],
+                login=self.mt5_config['login'],
+                password=self.mt5_config['password'],
+                server=self.mt5_config['server'],
+                timeout=60000
             )
             
             if not init_result:
-                raise Exception(f"MT5 initialize failed: {mt5.last_error()}")
+                error_code = mt5.last_error()
+                raise Exception(f"MT5 initialize failed. Error code: {error_code}")
             
-            # Tunggu MT5 terbuka
-            time.sleep(5)
+            print("✅ MT5 initialized successfully")
             
-            try:
-                # Koneksikan ke window MT5
-                app = Application().connect(title_re="MetaTrader 5")
-                main_window = app.window(title_re="MetaTrader 5")
-                
-                # Fokus ke window
-                main_window.set_focus()
-                time.sleep(1)
-                
-                # Tekan Alt+F untuk menu File
-                keyboard.send_keys('%F')
-                time.sleep(0.5)
-                
-                # Tekan L untuk Login
-                keyboard.send_keys('L')
-                time.sleep(1)
-                
-                # Input login credentials
-                keyboard.send_keys(str(self.mt5_config['login']))
-                keyboard.send_keys('{TAB}')
-                keyboard.send_keys(self.mt5_config['password'])
-                keyboard.send_keys('{TAB}')
-                keyboard.send_keys(self.mt5_config['server'])
-                time.sleep(0.5)
-                
-                # Tekan Enter untuk login
-                keyboard.send_keys('{ENTER}')
-                
-                # Tunggu proses login
-                time.sleep(10)
-                
-                # Verifikasi login
-                account_info = mt5.account_info()
-                if account_info is None:
-                    raise Exception("Failed to get account info")
-                
-                print("\n=== INFORMASI AKUN ===")
-                print(f"Login: {account_info.login}")
-                print(f"Server: {account_info.server}")
-                print(f"Balance: ${account_info.balance}")
-                print(f"Equity: ${account_info.equity}")
-                print(f"Company: {account_info.company}")
-                
-                return True
-                
-            except Exception as e:
-                print(f"❌ Error automating login: {str(e)}")
-                return False
-                
+            # Verifikasi login
+            account_info = mt5.account_info()
+            if account_info is None:
+                raise Exception("Failed to get account info")
+            
+            # Update status login
+            self.login_status.update({
+                'is_logged_in': True,
+                'last_login': datetime.now(),
+                'login_attempts': 0
+            })
+            
+            print("\n=== INFORMASI AKUN ===")
+            print(f"Login: {account_info.login}")
+            print(f"Server: {account_info.server}")
+            print(f"Balance: ${account_info.balance:.2f}")
+            print(f"Equity: ${account_info.equity:.2f}")
+            print(f"Company: {account_info.company}")
+            
+            # Kirim notifikasi Telegram
+            if hasattr(self, 'notifications') and self.notifications['telegram']['enabled']:
+                self.send_telegram(f"""
+✅ LOGIN MT5 BERHASIL!
+
+👤 Account: {account_info.login}
+💰 Balance: ${account_info.balance:.2f}
+💵 Equity: ${account_info.equity:.2f}
+🏢 Broker: {account_info.company}
+⚡️ Server: {self.mt5_config['server']}
+
+Bot siap digunakan!
+Gunakan /help untuk melihat menu perintah.
+                """)
+            
+            return True
+            
         except Exception as e:
             print(f"\n❌ MT5 ERROR: {str(e)}")
             print(f"Last MT5 Error: {mt5.last_error()}")
+            
+            # Update status login
+            self.login_status.update({
+                'is_logged_in': False,
+                'login_attempts': self.login_status['login_attempts'] + 1
+            })
+            
+            # Kirim notifikasi error ke Telegram
+            if hasattr(self, 'notifications') and self.notifications['telegram']['enabled']:
+                self.send_telegram(f"""
+❌ LOGIN MT5 GAGAL!
+
+Error: {str(e)}
+Attempts: {self.login_status['login_attempts']}
+
+Gunakan /login untuk mencoba lagi.
+                """)
+            
             return False
             
         finally:
             print("\n=== SELESAI PROSES LOGIN ===")
 
-    def check_mt5_connection(self):
+    def check_login_status(self):
         """
-        Cek koneksi MT5 dan reconnect jika terputus
+        Cek status login dan reconnect jika perlu
         """
         try:
+            if not self.login_status['is_logged_in']:
+                print("⚠️ Not logged in, attempting to reconnect...")
+                return self.initialize_mt5()
+            
+            # Cek koneksi MT5
             if not mt5.terminal_info():
-                print("⚠️ MT5 connection lost. Attempting to reconnect...")
-                if not self.initialize_mt5():
-                    raise Exception("Failed to reconnect to MT5")
-                print("✅ MT5 reconnected successfully")
-                
+                print("⚠️ MT5 connection lost, attempting to reconnect...")
+                return self.initialize_mt5()
+            
             return True
+            
         except Exception as e:
-            print(f"❌ MT5 connection error: {e}")
+            print(f"❌ Error checking login status: {e}")
             return False
 
     def start_telegram_polling(self):
