@@ -91,6 +91,17 @@ class ForexGoldAnalyzer:
             'daily_profit_loss': 0,
             'win_rate': 0
         }
+        
+        # Status bot
+        self.bot_status = {
+            'is_running': False,
+            'start_time': None,
+            'total_signals': 0
+        }
+        
+        # Command handler untuk Telegram
+        if self.notifications['telegram']['enabled']:
+            self.setup_telegram_commands()
 
     def initialize_telegram_bot(self):
         try:
@@ -431,15 +442,159 @@ Today's P/L: ${self.performance['daily_profit_loss']:.2f}
         except Exception as e:
             print(f"❌ Error generating report: {e}")
 
+    def setup_telegram_commands(self):
+        """
+        Setup command handler untuk Telegram
+        """
+        try:
+            bot = self.notifications['telegram']['bot']
+            
+            @bot.message_handler(commands=['start'])
+            def send_welcome(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    bot.reply_to(message, "❌ Maaf, Anda tidak memiliki akses ke bot ini.")
+                    return
+                    
+                welcome_text = """
+🤖 Selamat datang di Bot Trading!
+
+Perintah yang tersedia:
+/run - Mulai auto trading
+/stop - Hentikan auto trading
+/status - Cek status bot
+/balance - Cek balance
+/positions - Cek posisi terbuka
+/history - Lihat history trading
+/report - Lihat laporan performa
+/settings - Lihat pengaturan bot
+/help - Bantuan
+                """
+                bot.reply_to(message, welcome_text)
+
+            @bot.message_handler(commands=['run'])
+            def start_trading(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                if not self.bot_status['is_running']:
+                    self.bot_status['is_running'] = True
+                    self.bot_status['start_time'] = datetime.now()
+                    bot.reply_to(message, "✅ Bot trading dimulai!")
+                    
+                    # Jalankan auto trading dalam thread terpisah
+                    import threading
+                    trading_thread = threading.Thread(target=self.run_auto_trading)
+                    trading_thread.daemon = True
+                    trading_thread.start()
+                else:
+                    bot.reply_to(message, "⚠️ Bot sudah berjalan!")
+
+            @bot.message_handler(commands=['stop'])
+            def stop_trading(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                if self.bot_status['is_running']:
+                    self.bot_status['is_running'] = False
+                    duration = datetime.now() - self.bot_status['start_time']
+                    bot.reply_to(message, f"🛑 Bot dihentikan!\nDurasi: {duration}")
+                else:
+                    bot.reply_to(message, "⚠️ Bot sedang tidak berjalan!")
+
+            @bot.message_handler(commands=['status'])
+            def check_status(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                status = "🟢 Running" if self.bot_status['is_running'] else "🔴 Stopped"
+                duration = datetime.now() - self.bot_status['start_time'] if self.bot_status['start_time'] else "N/A"
+                
+                status_text = f"""
+📊 STATUS BOT TRADING
+
+Status: {status}
+Running Time: {duration}
+Total Signals: {self.bot_status['total_signals']}
+Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                """
+                bot.reply_to(message, status_text)
+
+            @bot.message_handler(commands=['balance'])
+            def check_balance(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                account = mt5.account_info()
+                if account is None:
+                    bot.reply_to(message, "❌ Error mendapatkan info balance")
+                    return
+                    
+                balance_text = f"""
+💰 ACCOUNT BALANCE
+
+Balance: ${account.balance:.2f}
+Equity: ${account.equity:.2f}
+Profit: ${account.profit:.2f}
+Margin Level: {account.margin_level:.2f}%
+                """
+                bot.reply_to(message, balance_text)
+
+            @bot.message_handler(commands=['positions'])
+            def check_positions(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                positions = mt5.positions_get()
+                if positions is None or len(positions) == 0:
+                    bot.reply_to(message, "📊 Tidak ada posisi terbuka")
+                    return
+                    
+                positions_text = "📊 POSISI TERBUKA\n\n"
+                for pos in positions:
+                    positions_text += f"""
+Symbol: {pos.symbol}
+Type: {'BUY' if pos.type == 0 else 'SELL'}
+Volume: {pos.volume}
+Open Price: {pos.price_open}
+Current Price: {pos.price_current}
+SL: {pos.sl}
+TP: {pos.tp}
+Profit: ${pos.profit}
+                    """
+                
+                bot.reply_to(message, positions_text)
+
+            @bot.message_handler(commands=['settings'])
+            def show_settings(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                    
+                settings_text = f"""
+⚙️ BOT SETTINGS
+
+Risk per Trade: {self.risk_params['risk_percent']}%
+Max Daily Loss: {self.risk_params['max_daily_loss']}%
+Max Trades: {self.risk_params['max_trades']}
+Trading Hours: {self.market_filters['trading_hours']['start']} - {self.market_filters['trading_hours']['end']}
+Max Spread: {self.market_filters['max_spread']} pips
+Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
+                """
+                bot.reply_to(message, settings_text)
+
+            print("✅ Telegram commands berhasil disetup")
+            
+        except Exception as e:
+            print(f"❌ Error setup telegram commands: {e}")
+
     def run_auto_trading(self):
         """
-        Menjalankan auto trading dengan fitur tambahan
+        Update fungsi run_auto_trading
         """
         try:
             print("\n=== AUTO TRADING STARTED ===")
             last_report_time = datetime.now()
             
-            while True:
+            while self.bot_status['is_running']:  # Cek status bot
                 # Generate laporan harian
                 now = datetime.now()
                 if now.hour == 0 and (now - last_report_time).seconds > 3600:
@@ -503,6 +658,7 @@ Today's P/L: ${self.performance['daily_profit_loss']:.2f}
             error_msg = f"❌ Error dalam auto trading: {e}"
             print(error_msg)
             self.send_telegram(error_msg)
+            self.bot_status['is_running'] = False  # Stop bot jika error
 
 def main():
     # Initialize MT5
@@ -518,9 +674,23 @@ def main():
     if analyzer.test_telegram_connection():
         print("✅ Telegram connection successful!")
         
-        # Start auto trading
-        print("\nStarting auto trading...")
-        analyzer.run_auto_trading()
+        # Start bot polling dalam thread terpisah
+        import threading
+        bot = analyzer.notifications['telegram']['bot']
+        polling_thread = threading.Thread(target=bot.polling, kwargs={'none_stop': True})
+        polling_thread.daemon = True
+        polling_thread.start()
+        
+        print("\nBot siap menerima perintah dari Telegram!")
+        print("Kirim /start untuk memulai")
+        
+        # Keep main thread running
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nProgram dihentikan")
+            
     else:
         print("❌ Telegram connection failed!")
 
