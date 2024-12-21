@@ -39,6 +39,21 @@ class ForexGoldAnalyzer:
             }
         }
         
+        # Inisialisasi MT5 tanpa login
+        self.mt5_config = {
+            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
+        }
+        
+        # Status login
+        self.login_status = {
+            'is_logged_in': False,
+            'login_attempts': 0,
+            'last_login': None
+        }
+        
+        # Temporary storage untuk proses login
+        self.temp_credentials = {}
+        
         # Inisialisasi bot Telegram
         if self.notifications['telegram']['enabled']:
             self.initialize_telegram_bot()
@@ -100,27 +115,9 @@ class ForexGoldAnalyzer:
             'is_polling': False  # Tambahan status untuk polling
         }
         
-        # Status login
-        self.login_status = {
-            'is_logged_in': False,
-            'login_attempts': 0,
-            'last_login': None
-        }
-        
-        # Temporary storage untuk proses login
-        self.temp_credentials = {}
-        
         # Command handler untuk Telegram
         if self.notifications['telegram']['enabled']:
             self.setup_telegram_commands()
-        
-        # Kredensial MT5
-        self.mt5_config = {
-            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
-        }
-        
-        # Inisialisasi koneksi MT5
-        self.initialize_mt5()
 
     def initialize_telegram_bot(self):
         try:
@@ -767,38 +764,26 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             if not mt5.initialize(path=self.mt5_config['path']):
                 raise Exception("MT5 initialize() failed")
                 
-            # Login ke akun
-            if not mt5.login(
-                login=self.mt5_config['login'],
-                password=self.mt5_config['password'],
-                server=self.mt5_config['server']
-            ):
-                raise Exception("MT5 login failed")
+            # Login hanya jika ada kredensial
+            if all(k in self.mt5_config for k in ['login', 'password', 'server']):
+                if not mt5.login(
+                    login=self.mt5_config['login'],
+                    password=self.mt5_config['password'],
+                    server=self.mt5_config['server']
+                ):
+                    raise Exception("MT5 login failed")
                 
-            # Cek koneksi
-            account_info = mt5.account_info()
-            if account_info is None:
-                raise Exception("Failed to get account info")
+                # Cek koneksi
+                account_info = mt5.account_info()
+                if account_info is None:
+                    raise Exception("Failed to get account info")
+                    
+                return True
                 
-            # Kirim notifikasi login berhasil
-            login_message = f"""
-✅ MT5 LOGIN BERHASIL
-
-👤 Account: {account_info.login}
-💰 Balance: ${account_info.balance:.2f}
-💵 Equity: ${account_info.equity:.2f}
-🏢 Broker: {account_info.company}
-⚡️ Server: {self.mt5_config['server']}
-            """
-            print(login_message)
-            self.send_telegram(login_message)
-            
-            return True
+            return False
             
         except Exception as e:
-            error_msg = f"❌ MT5 initialization error: {e}"
-            print(error_msg)
-            self.send_telegram(error_msg)
+            print(f"❌ MT5 initialization error: {e}")
             return False
 
     def check_mt5_connection(self):
@@ -884,15 +869,10 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             self.bot_status['is_running'] = False
 
 def main():
-    # Initialize MT5
-    if not mt5.initialize():
-        print("❌ Initialize MT5 failed")
-        quit()
-
-    # Create analyzer instance
+    # Initialize analyzer
     analyzer = ForexGoldAnalyzer()
     
-    # Test connections
+    # Test Telegram connection only
     if analyzer.test_telegram_connection():
         print("✅ Telegram connection successful!")
         
@@ -900,6 +880,7 @@ def main():
         if analyzer.start_telegram_polling():
             print("\n🤖 Bot siap menerima perintah!")
             print("Kirim /start atau /help untuk melihat menu")
+            print("Gunakan /login untuk login ke MT5")
             
             # Keep main thread running
             while True:
@@ -910,15 +891,10 @@ def main():
 
 if __name__ == "__main__":
     try:
-        # Initialize MT5
-        if not mt5.initialize():
-            print("❌ Initialize MT5 failed")
-            quit()
-
-        # Create analyzer instance
+        # Initialize analyzer
         analyzer = ForexGoldAnalyzer()
         
-        # Test connections
+        # Test Telegram connection only
         if analyzer.test_telegram_connection():
             print("✅ Telegram connection successful!")
             
@@ -926,6 +902,7 @@ if __name__ == "__main__":
             if analyzer.start_telegram_polling():
                 print("\n🤖 Bot siap menerima perintah!")
                 print("Kirim /start atau /help untuk melihat menu")
+                print("Gunakan /login untuk login ke MT5")
                 
                 # Keep main thread running
                 while True:
@@ -939,4 +916,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
     finally:
-        mt5.shutdown()
+        if mt5.initialize():
+            mt5.shutdown()
