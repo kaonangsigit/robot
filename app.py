@@ -964,7 +964,7 @@ Gunakan /login untuk mencoba lagi.
 
     def run_auto_trading(self):
         """
-        Update fungsi trading
+        Jalankan auto trading
         """
         try:
             print("\n=== AUTO TRADING STARTED ===")
@@ -974,23 +974,61 @@ Gunakan /login untuk mencoba lagi.
                 try:
                     # Cek koneksi MT5
                     if not self.check_mt5_connection():
-                        self.send_telegram("⚠️ MT5 connection lost! Trying to reconnect...")
-                        time.sleep(60)
+                        self.send_telegram("⚠️ MT5 connection lost! Mencoba reconnect...")
+                        if not self.initialize_mt5():
+                            time.sleep(60)
+                            continue
+                    
+                    # Cek kondisi market
+                    market_ok, market_message = self.check_market_conditions()
+                    if not market_ok:
+                        print(f"⚠️ {market_message}")
+                        time.sleep(300)  # tunggu 5 menit
                         continue
                     
-                    # Trading logic
-                    for symbol in self.forex_pairs:
-                        print(f"\nAnalyzing {symbol}...")
-                        # ... (kode trading Anda) ...
+                    # Analisa setiap pair
+                    for instrument_type, symbols in self.trading_pairs.items():
+                        for symbol in symbols:
+                            print(f"\nAnalyzing {symbol}...")
+                            
+                            signal = self.analyze_market(symbol)
+                            if signal:
+                                self.bot_status['total_signals'] += 1
+                                
+                                # Notifikasi sinyal
+                                signal_msg = f"""
+🎯 SINYAL TRADING
+
+Symbol: {signal['symbol']}
+Type: {instrument_type}
+Action: {signal['action']}
+Confidence: {signal['confidence']*100:.1f}%
+Trend: {signal['trend']}
+Momentum: {signal['momentum']}
+Volume: {signal['volume']}
+                                """
+                                self.send_telegram(signal_msg)
+                                
+                                # Eksekusi trade
+                                if self.execute_trade(signal):
+                                    self.send_telegram("✅ Order berhasil dieksekusi!")
+                                else:
+                                    self.send_telegram("❌ Order gagal dieksekusi!")
+                            
+                            # Jeda antar analisa
+                            time.sleep(2)
                     
-                    print("\nWaiting for next analysis...")
-                    time.sleep(300)  # 5 menit delay
+                    # Monitor posisi terbuka
+                    self.monitor_positions()
+                    
+                    print("\nWaiting for next analysis cycle...")
+                    time.sleep(300)  # Analisa setiap 5 menit
                     
                 except Exception as e:
                     error_msg = f"❌ Error dalam trading loop: {e}"
                     print(error_msg)
                     self.send_telegram(error_msg)
-                    time.sleep(60)  # Delay sebelum retry
+                    time.sleep(60)
             
             self.send_telegram("🛑 Auto trading dihentikan!")
             
@@ -1414,6 +1452,33 @@ Drawdown: {drawdown:.2f}%
             
         except Exception as e:
             print(f"❌ Error closing position: {e}")
+            return False
+
+    def check_mt5_connection(self):
+        """
+        Cek koneksi MT5 dan status login
+        """
+        try:
+            # Cek apakah MT5 terkoneksi
+            if not mt5.terminal_info():
+                print("❌ MT5 tidak terkoneksi")
+                return False
+                
+            # Cek apakah sudah login
+            account_info = mt5.account_info()
+            if account_info is None:
+                print("❌ Belum login ke MT5")
+                return False
+                
+            # Cek apakah login ID sesuai
+            if account_info.login != self.mt5_config['login']:
+                print("❌ Login ID tidak sesuai")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error checking MT5 connection: {e}")
             return False
 
 def main():
