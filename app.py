@@ -1,6 +1,6 @@
 import MetaTrader5 as mt5
 import pandas as pd
-from datetime import datetime, time
+from datetime import datetime, timedelta
 import time
 import numpy as np
 import os
@@ -19,10 +19,10 @@ class ForexGoldAnalyzer:
     def __init__(self):
         # Konfigurasi MT5
         self.mt5_config = {
-            'login': ,  # Ganti dengan login ID Anda
-            'password': '',  # Ganti dengan password Anda
-            'server': '',  # Ganti dengan server broker Anda
-            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'  # Sesuaikan path MT5
+            'login': 307258870,  
+            'password': '@Onang2002',  
+            'server': 'XMGlobal-MT5 6',  
+            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
         }
         
         # Status login
@@ -124,8 +124,11 @@ class ForexGoldAnalyzer:
 
         # Market filters
         self.market_filters = {
-            'trading_hours': {'start': time(9,0), 'end': time(17,0)},
-            'max_spread': 3.0  # dalam pips
+            'trading_hours': {
+                'start': datetime.strptime('09:00', '%H:%M').time(),
+                'end': datetime.strptime('17:00', '%H:%M').time()
+            },
+            'max_spread': 3.0
         }
 
         # Trailing parameters
@@ -1282,7 +1285,7 @@ Analysis:
         try:
             current_time = datetime.now().time()
             
-            # Cek jam trading
+            # Cek jam trading menggunakan datetime.time()
             if not (self.market_filters['trading_hours']['start'] <= 
                    current_time <= 
                    self.market_filters['trading_hours']['end']):
