@@ -609,10 +609,6 @@ Gunakan /login untuk mencoba lagi.
                         
                     # Simpan server
                     server_name = message.text.strip()
-                    
-                    # Hapus spasi berlebih dan normalisasi format
-                    server_name = ' '.join(server_name.split())
-                    
                     self.temp_credentials['server'] = server_name
                     
                     # Update MT5 config
@@ -653,11 +649,10 @@ Kirim /help untuk melihat menu perintah.
 ❌ Login gagal! 
 
 Tips format nama server:
-- XMGlobal-MT5
-- XMGlobal-Demo
-- XMGlobal-Real
-- ICMarkets-Live
-- ICMarkets-Demo
+- XMGlobal-MT5 6
+- XMGlobal-MT5-6
+- XMGlobal-Demo 6
+- XMGlobal-Real 6
 
 Gunakan /login untuk mencoba lagi.
                         """
@@ -782,7 +777,7 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Perbaikan inisialisasi dan login ke MT5
+        Perbaikan inisialisasi dan login ke MT5 dengan format server yang lebih lengkap
         """
         try:
             # Shutdown MT5 jika sudah berjalan
@@ -797,34 +792,66 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             if all(k in self.mt5_config for k in ['login', 'password', 'server']):
                 print(f"\nMencoba login ke server: {self.mt5_config['server']}")
                 
-                # Coba login dengan beberapa variasi nama server
-                server_variations = [
-                    self.mt5_config['server'],
-                    self.mt5_config['server'].replace('-', ' '),
-                    self.mt5_config['server'].replace(' ', '-'),
-                    f"{self.mt5_config['server']}-Demo",
-                    f"{self.mt5_config['server']}-Live",
-                    f"{self.mt5_config['server']} Demo",
-                    f"{self.mt5_config['server']} Live"
+                # Pisahkan nama server dan nomor (jika ada)
+                server_parts = self.mt5_config['server'].split()
+                base_server = server_parts[0] if len(server_parts) > 0 else ""
+                server_number = server_parts[-1] if len(server_parts) > 1 and server_parts[-1].isdigit() else ""
+                
+                # Buat variasi nama server
+                server_variations = []
+                
+                # Format dasar
+                base_formats = [
+                    base_server,
+                    base_server.replace('-', ' '),
+                    base_server.replace(' ', '-')
                 ]
                 
+                # Tambahkan variasi dengan nomor server
+                for fmt in base_formats:
+                    server_variations.extend([
+                        f"{fmt} {server_number}",
+                        f"{fmt}-{server_number}",
+                        f"{fmt}{server_number}",
+                        f"{fmt} {server_number}",
+                        f"{fmt}-{server_number}-Demo",
+                        f"{fmt}-{server_number}-Live",
+                        f"{fmt} {server_number} Demo",
+                        f"{fmt} {server_number} Live"
+                    ])
+                
+                # Tambahkan variasi tanpa nomor server
+                server_variations.extend([
+                    base_server,
+                    f"{base_server}-Demo",
+                    f"{base_server}-Live",
+                    f"{base_server} Demo",
+                    f"{base_server} Live"
+                ])
+                
+                # Hapus duplikat dan string kosong
+                server_variations = list(set(filter(None, server_variations)))
+                
+                print("Mencoba variasi server:")
                 for server in server_variations:
-                    print(f"Mencoba server: {server}")
-                    if mt5.login(
-                        login=self.mt5_config['login'],
-                        password=self.mt5_config['password'],
-                        server=server
-                    ):
-                        print(f"✅ Berhasil login ke server: {server}")
-                        # Update nama server yang berhasil
-                        self.mt5_config['server'] = server
-                        
-                        # Cek koneksi
-                        account_info = mt5.account_info()
-                        if account_info is None:
-                            raise Exception("Failed to get account info")
+                    print(f"Trying: {server}")
+                    try:
+                        if mt5.login(
+                            login=self.mt5_config['login'],
+                            password=self.mt5_config['password'],
+                            server=server
+                        ):
+                            print(f"✅ Berhasil login ke server: {server}")
+                            # Update nama server yang berhasil
+                            self.mt5_config['server'] = server
                             
-                        return True
+                            # Cek koneksi
+                            account_info = mt5.account_info()
+                            if account_info is not None:
+                                return True
+                    except Exception as e:
+                        print(f"Failed with {server}: {str(e)}")
+                        continue
                 
                 raise Exception(f"Login gagal untuk semua variasi server")
                 
