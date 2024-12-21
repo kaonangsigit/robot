@@ -33,8 +33,8 @@ class ForexGoldAnalyzer:
         self.notifications = {
             'telegram': {
                 'enabled': True,
-                'token': '7826750724:AAH388qrr5H0o4aH8wDJh2d4HLT9kuPS3Mo',
-                'chat_id': '734315039',
+                'token': 'isi token telegram',
+                'chat_id': 'isi chat id telegram',
                 'bot': None
             }
         }
@@ -96,7 +96,8 @@ class ForexGoldAnalyzer:
         self.bot_status = {
             'is_running': False,
             'start_time': None,
-            'total_signals': 0
+            'total_signals': 0,
+            'is_polling': False  # Tambahan status untuk polling
         }
         
         # Status login
@@ -465,11 +466,70 @@ Today's P/L: ${self.performance['daily_profit_loss']:.2f}
 
     def setup_telegram_commands(self):
         """
-        Update setup_telegram_commands dengan fitur login
+        Update setup_telegram_commands
         """
         try:
             bot = self.notifications['telegram']['bot']
             
+            @bot.message_handler(commands=['start', 'help'])
+            def send_welcome(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    bot.reply_to(message, "❌ Anda tidak memiliki akses ke bot ini.")
+                    return
+                    
+                welcome_text = """
+🤖 Selamat datang di Bot Trading!
+
+Perintah yang tersedia:
+/login - Login ke MT5
+/run - Mulai auto trading
+/stop - Hentikan auto trading
+/status - Cek status bot
+/balance - Cek balance
+/positions - Cek posisi terbuka
+/history - Lihat history trading
+/report - Lihat laporan performa
+/settings - Lihat pengaturan bot
+/help - Bantuan
+                """
+                bot.reply_to(message, welcome_text)
+
+            @bot.message_handler(commands=['run'])
+            def start_bot(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    bot.reply_to(message, "❌ Anda tidak memiliki akses.")
+                    return
+                
+                if not self.login_status['is_logged_in']:
+                    bot.reply_to(message, "❌ Belum login ke MT5! Gunakan /login dulu.")
+                    return
+                
+                if self.bot_status['is_running']:
+                    bot.reply_to(message, "⚠️ Bot sudah berjalan!")
+                    return
+                
+                try:
+                    # Start trading dalam thread baru
+                    import threading
+                    self.bot_status['is_running'] = True
+                    self.bot_status['start_time'] = datetime.now()
+                    
+                    trading_thread = threading.Thread(target=self.run_auto_trading)
+                    trading_thread.daemon = True
+                    trading_thread.start()
+                    
+                    bot.reply_to(message, """
+✅ Bot trading berhasil dijalankan!
+
+Gunakan /status untuk memonitor bot
+Gunakan /stop untuk menghentikan bot
+                    """)
+                    
+                except Exception as e:
+                    error_msg = f"❌ Error starting bot: {e}"
+                    bot.reply_to(message, error_msg)
+                    self.bot_status['is_running'] = False
+
             @bot.message_handler(commands=['login'])
             def start_login(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
@@ -611,36 +671,6 @@ Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 """
                 bot.reply_to(message, status_text)
 
-            @bot.message_handler(commands=['run'])
-            def start_trading(message):
-                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    return
-                    
-                if not self.bot_status['is_running']:
-                    self.bot_status['is_running'] = True
-                    self.bot_status['start_time'] = datetime.now()
-                    bot.reply_to(message, "✅ Bot trading dimulai!")
-                    
-                    # Jalankan auto trading dalam thread terpisah
-                    import threading
-                    trading_thread = threading.Thread(target=self.run_auto_trading)
-                    trading_thread.daemon = True
-                    trading_thread.start()
-                else:
-                    bot.reply_to(message, "⚠️ Bot sudah berjalan!")
-
-            @bot.message_handler(commands=['stop'])
-            def stop_trading(message):
-                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    return
-                    
-                if self.bot_status['is_running']:
-                    self.bot_status['is_running'] = False
-                    duration = datetime.now() - self.bot_status['start_time']
-                    bot.reply_to(message, f"🛑 Bot dihentikan!\nDurasi: {duration}")
-                else:
-                    bot.reply_to(message, "⚠️ Bot sedang tidak berjalan!")
-
             @bot.message_handler(commands=['balance'])
             def check_balance(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
@@ -766,88 +796,68 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             print(f"❌ MT5 connection error: {e}")
             return False
 
-    def run_auto_trading(self):
+    def start_telegram_polling(self):
         """
-        Update run_auto_trading dengan pengecekan login
+        Mulai polling Telegram dalam thread terpisah
         """
         try:
-            if not self.login_status['is_logged_in']:
-                error_msg = "❌ Belum login ke MT5! Gunakan /login untuk login."
-                print(error_msg)
-                self.send_telegram(error_msg)
-                return
+            if not self.bot_status['is_polling']:
+                import threading
                 
+                bot = self.notifications['telegram']['bot']
+                
+                def polling_worker():
+                    print("Starting Telegram polling...")
+                    self.bot_status['is_polling'] = True
+                    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+                
+                polling_thread = threading.Thread(target=polling_worker)
+                polling_thread.daemon = True
+                polling_thread.start()
+                
+                print("✅ Telegram polling started!")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error starting Telegram polling: {e}")
+            return False
+
+    def run_auto_trading(self):
+        """
+        Update fungsi trading
+        """
+        try:
             print("\n=== AUTO TRADING STARTED ===")
-            last_report_time = datetime.now()
+            self.send_telegram("🚀 Auto trading dimulai!")
             
             while self.bot_status['is_running']:
-                # Cek koneksi MT5
-                if not self.check_mt5_connection():
-                    print("⚠️ Waiting for MT5 connection...")
-                    time.sleep(60)  # Tunggu 1 menit sebelum mencoba lagi
-                    continue
-                
-                # Generate laporan harian
-                now = datetime.now()
-                if now.hour == 0 and (now - last_report_time).seconds > 3600:
-                    self.generate_report()
-                    last_report_time = now
-                    self.performance['daily_profit_loss'] = 0  # Reset daily P/L
-                
-                for symbol in self.forex_pairs:
-                    # Cek kondisi market
-                    market_ok, market_message = self.check_market_conditions(symbol)
-                    if not market_ok:
-                        print(f"\n⚠️ {symbol}: {market_message}")
+                try:
+                    # Cek koneksi MT5
+                    if not self.check_mt5_connection():
+                        self.send_telegram("⚠️ MT5 connection lost! Trying to reconnect...")
+                        time.sleep(60)
                         continue
-                        
-                    print(f"\nAnalyzing {symbol}...")
                     
-                    # Update trailing stops untuk posisi yang ada
-                    positions = mt5.positions_get(symbol=symbol)
-                    if positions:
-                        for position in positions:
-                            self.manage_trailing_stop(position)
+                    # Trading logic
+                    for symbol in self.forex_pairs:
+                        print(f"\nAnalyzing {symbol}...")
+                        # ... (kode trading Anda) ...
                     
-                    # Analisis multi-timeframe
-                    signals = {}
-                    for tf_name, tf in self.timeframes.items():
-                        df = self.get_price_data(symbol, tf)
-                        if df is not None:
-                            df = self.calculate_indicators(df)
-                            signals[tf_name] = self.analyze_signals(df)
+                    print("\nWaiting for next analysis...")
+                    time.sleep(300)  # 5 menit delay
                     
-                    # Hitung total strength
-                    total_strength = sum([s['strength'] for s in signals.values()])
-                    
-                    # Execute trade jika sinyal kuat
-                    if abs(total_strength) >= 3:
-                        trade_type = "BUY" if total_strength > 0 else "SELL"
-                        
-                        # Hitung SL dan TP berdasarkan ATR
-                        df = self.get_price_data(symbol, mt5.TIMEFRAME_H1)
-                        df = self.calculate_indicators(df)
-                        atr = df['ATR'].iloc[-1]
-                        
-                        current_price = mt5.symbol_info_tick(symbol).ask if trade_type == "BUY" else mt5.symbol_info_tick(symbol).bid
-                        sl_distance = atr * 1.5
-                        tp_distance = atr * 2
-                        
-                        sl_price = current_price - sl_distance if trade_type == "BUY" else current_price + sl_distance
-                        tp_price = current_price + tp_distance if trade_type == "BUY" else current_price - tp_distance
-                        
-                        # Hitung lot size
-                        lot_size = self.calculate_position_size(symbol, sl_distance)
-                        
-                        # Execute trade
-                        if self.execute_trade(symbol, trade_type, lot_size, sl_price, tp_price):
-                            print(f"✅ Trade executed for {symbol}")
-                        
-                print("\nWaiting for next analysis...")
-                time.sleep(300)  # Wait 5 minutes
-                
+                except Exception as e:
+                    error_msg = f"❌ Error dalam trading loop: {e}"
+                    print(error_msg)
+                    self.send_telegram(error_msg)
+                    time.sleep(60)  # Delay sebelum retry
+            
+            self.send_telegram("🛑 Auto trading dihentikan!")
+            
         except Exception as e:
-            error_msg = f"❌ Error dalam auto trading: {e}"
+            error_msg = f"❌ Fatal error dalam auto trading: {e}"
             print(error_msg)
             self.send_telegram(error_msg)
             self.bot_status['is_running'] = False
@@ -861,27 +871,51 @@ def main():
     # Create analyzer instance
     analyzer = ForexGoldAnalyzer()
     
-    # Test koneksi MT5 dan Telegram
-    if analyzer.check_mt5_connection() and analyzer.test_telegram_connection():
-        print("\n✅ Semua koneksi berhasil!")
+    # Test connections
+    if analyzer.test_telegram_connection():
+        print("✅ Telegram connection successful!")
         
-        # Start bot polling dalam thread terpisah
-        import threading
-        bot = analyzer.notifications['telegram']['bot']
-        polling_thread = threading.Thread(target=bot.polling, kwargs={'none_stop': True})
-        polling_thread.daemon = True
-        polling_thread.start()
-        
-        print("\nBot siap menerima perintah dari Telegram!")
-        print("Kirim /start untuk memulai")
-        
-        # Keep main thread running
-        try:
+        # Start Telegram polling
+        if analyzer.start_telegram_polling():
+            print("\n🤖 Bot siap menerima perintah!")
+            print("Kirim /start atau /help untuk melihat menu")
+            
+            # Keep main thread running
             while True:
                 time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nProgram dihentikan")
-            mt5.shutdown()
+                
+    else:
+        print("❌ Telegram connection failed!")
 
 if __name__ == "__main__":
-    main()
+    try:
+        # Initialize MT5
+        if not mt5.initialize():
+            print("❌ Initialize MT5 failed")
+            quit()
+
+        # Create analyzer instance
+        analyzer = ForexGoldAnalyzer()
+        
+        # Test connections
+        if analyzer.test_telegram_connection():
+            print("✅ Telegram connection successful!")
+            
+            # Start Telegram polling
+            if analyzer.start_telegram_polling():
+                print("\n🤖 Bot siap menerima perintah!")
+                print("Kirim /start atau /help untuk melihat menu")
+                
+                # Keep main thread running
+                while True:
+                    time.sleep(1)
+                    
+        else:
+            print("❌ Telegram connection failed!")
+
+    except KeyboardInterrupt:
+        print("\n⚠️ Program dihentikan oleh user")
+    except Exception as e:
+        print(f"\n❌ Fatal error: {e}")
+    finally:
+        mt5.shutdown()
