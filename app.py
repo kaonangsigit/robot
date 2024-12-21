@@ -39,7 +39,7 @@ class ForexGoldAnalyzer:
             }
         }
         
-        # Inisialisasi MT5 tanpa login
+        # Hapus kredensial hardcoded, ganti dengan temporary storage
         self.mt5_config = {
             'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'
         }
@@ -527,18 +527,18 @@ Gunakan /stop untuk menghentikan bot
             @bot.message_handler(commands=['login'])
             def start_login(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    bot.send_message(message.chat.id, "❌ Anda tidak memiliki akses.")
+                    bot.reply_to(message, "❌ Anda tidak memiliki akses.")
                     return
                 
                 if self.login_status['is_logged_in']:
-                    bot.send_message(message.chat.id, "⚠️ Sudah login ke MT5!")
+                    bot.reply_to(message, "⚠️ Sudah login ke MT5!")
                     return
                 
                 # Reset temporary credentials
                 self.temp_credentials = {}
                 
                 # Minta login ID
-                msg = bot.send_message(message.chat.id, """
+                msg = bot.reply_to(message, """
 🔐 Proses Login MT5
 
 Silakan kirim Login ID MT5 Anda:
@@ -549,14 +549,14 @@ Silakan kirim Login ID MT5 Anda:
             def process_login_id(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
+                        bot.reply_to(message, "✅ Proses login dibatalkan.")
                         return
                         
                     login_id = int(message.text.strip())
                     self.temp_credentials['login'] = login_id
                     
                     # Minta password
-                    msg = bot.send_message(message.chat.id, """
+                    msg = bot.reply_to(message, """
 🔑 Masukkan Password MT5:
 (Pesan akan dihapus setelah diproses)
 (Ketik 'cancel' untuk membatalkan)
@@ -564,7 +564,7 @@ Silakan kirim Login ID MT5 Anda:
                     bot.register_next_step_handler(msg, process_password)
                     
                 except ValueError:
-                    bot.send_message(message.chat.id, """
+                    bot.reply_to(message, """
 ❌ Login ID harus berupa angka!
 Gunakan /login untuk mencoba lagi.
                     """)
@@ -573,24 +573,19 @@ Gunakan /login untuk mencoba lagi.
             def process_password(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
-                        try:
-                            bot.delete_message(message.chat.id, message.message_id)
-                        except:
-                            pass
+                        bot.reply_to(message, "✅ Proses login dibatalkan.")
+                        # Hapus pesan untuk keamanan
+                        bot.delete_message(message.chat.id, message.message_id)
                         return
                         
                     # Simpan password
                     self.temp_credentials['password'] = message.text.strip()
                     
                     # Hapus pesan password untuk keamanan
-                    try:
-                        bot.delete_message(message.chat.id, message.message_id)
-                    except:
-                        pass
+                    bot.delete_message(message.chat.id, message.message_id)
                     
                     # Minta nama server
-                    msg = bot.send_message(message.chat.id, """
+                    msg = bot.reply_to(message, """
 🏢 Masukkan Nama Server MT5:
 (Contoh: XMTrading-Demo, ICMarkets-Live)
 (Ketik 'cancel' untuk membatalkan)
@@ -598,27 +593,20 @@ Gunakan /login untuk mencoba lagi.
                     bot.register_next_step_handler(msg, process_server)
                     
                 except Exception as e:
-                    bot.send_message(message.chat.id, f"❌ Error: {e}")
+                    bot.reply_to(message, f"❌ Error: {e}")
                     return
 
             def process_server(message):
                 try:
                     if message.text.lower() == 'cancel':
-                        bot.send_message(message.chat.id, "✅ Proses login dibatalkan.")
+                        bot.reply_to(message, "✅ Proses login dibatalkan.")
                         return
                         
                     # Simpan server
-                    server_name = message.text.strip()
-                    self.temp_credentials['server'] = server_name
+                    self.temp_credentials['server'] = message.text.strip()
                     
                     # Update MT5 config
                     self.mt5_config.update(self.temp_credentials)
-                    
-                    # Info proses login
-                    bot.send_message(message.chat.id, """
-⏳ Mencoba login ke MT5...
-Mohon tunggu sebentar...
-                    """)
                     
                     # Coba login
                     login_result = self.initialize_mt5()
@@ -641,22 +629,15 @@ Mohon tunggu sebentar...
 Bot siap digunakan!
 Kirim /help untuk melihat menu perintah.
                         """
-                        bot.send_message(message.chat.id, success_message)
+                        bot.reply_to(message, success_message)
                         
                     else:
                         self.login_status['login_attempts'] += 1
-                        help_message = """
+                        bot.reply_to(message, """
 ❌ Login gagal! 
-
-Tips format nama server:
-- XMGlobal-MT5 6
-- XMGlobal-MT5-6
-- XMGlobal-Demo 6
-- XMGlobal-Real 6
-
+Silakan cek kembali kredensial Anda.
 Gunakan /login untuk mencoba lagi.
-                        """
-                        bot.send_message(message.chat.id, help_message)
+                        """)
                     
                     # Hapus kredensial temporary
                     self.temp_credentials = {}
@@ -664,7 +645,7 @@ Gunakan /login untuk mencoba lagi.
                     self.mt5_config.pop('password', None)
                     
                 except Exception as e:
-                    bot.send_message(message.chat.id, f"❌ Error: {e}")
+                    bot.reply_to(message, f"❌ Error: {e}")
                     return
 
             @bot.message_handler(commands=['logout'])
@@ -777,89 +758,115 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
 
     def initialize_mt5(self):
         """
-        Perbaikan inisialisasi dan login ke MT5 dengan format server yang lebih lengkap
+        Perbaikan inisialisasi MT5 dengan login otomatis
         """
         try:
-            # Shutdown MT5 jika sudah berjalan
-            if mt5.initialize():
-                mt5.shutdown()
+            print("\n=== MULAI PROSES LOGIN MT5 ===")
+            print(f"Path MT5: {self.mt5_config['path']}")
+            print(f"Login ID: {self.mt5_config['login']}")
+            print(f"Server Input: {self.mt5_config['server']}")
             
-            # Inisialisasi ulang MT5
-            if not mt5.initialize(path=self.mt5_config['path']):
-                raise Exception("MT5 initialize() failed")
+            # Force shutdown MT5 terlebih dahulu
+            if mt5.initialize():
+                print("Shutting down existing MT5 connection...")
+                mt5.shutdown()
+                time.sleep(2)
+            
+            # Inisialisasi MT5 dengan mode portable
+            print("\nMencoba inisialisasi MT5...")
+            init_result = mt5.initialize(
+                path=self.mt5_config['path'],
+                login=self.mt5_config['login'],
+                password=self.mt5_config['password'],
+                server=self.mt5_config['server'],
+                timeout=30000,
+                portable=True,  # Gunakan mode portable
+                auto_login=True  # Aktifkan auto login
+            )
+            
+            if not init_result:
+                print(f"❌ MT5 initialize failed. Error code: {mt5.last_error()}")
+                raise Exception(f"MT5 initialize failed: {mt5.last_error()}")
+            
+            print("✅ MT5 initialized successfully")
+            
+            # Tunggu beberapa detik untuk memastikan koneksi
+            time.sleep(5)
+            
+            # Coba login langsung dengan kredensial
+            login_result = mt5.login(
+                login=self.mt5_config['login'],
+                password=self.mt5_config['password'],
+                server=self.mt5_config['server']
+            )
+            
+            if login_result:
+                print("✅ Login berhasil!")
                 
-            # Login hanya jika ada kredensial
-            if all(k in self.mt5_config for k in ['login', 'password', 'server']):
-                print(f"\nMencoba login ke server: {self.mt5_config['server']}")
+                # Verifikasi koneksi
+                account_info = mt5.account_info()
+                if account_info is not None:
+                    print("\n=== INFORMASI AKUN ===")
+                    print(f"Login: {account_info.login}")
+                    print(f"Server: {account_info.server}")
+                    print(f"Balance: ${account_info.balance}")
+                    print(f"Equity: ${account_info.equity}")
+                    print(f"Company: {account_info.company}")
+                    return True
+                    
+            else:
+                # Jika login langsung gagal, coba dengan variasi server
+                server_base = self.mt5_config['server'].split()[0]
+                server_number = ''.join(filter(str.isdigit, self.mt5_config['server']))
                 
-                # Pisahkan nama server dan nomor (jika ada)
-                server_parts = self.mt5_config['server'].split()
-                base_server = server_parts[0] if len(server_parts) > 0 else ""
-                server_number = server_parts[-1] if len(server_parts) > 1 and server_parts[-1].isdigit() else ""
-                
-                # Buat variasi nama server
-                server_variations = []
-                
-                # Format dasar
-                base_formats = [
-                    base_server,
-                    base_server.replace('-', ' '),
-                    base_server.replace(' ', '-')
+                server_variations = [
+                    self.mt5_config['server'],
+                    f"{server_base}-{server_number}",
+                    f"{server_base} {server_number}",
+                    f"{server_base}{server_number}",
+                    f"{server_base}-MT5-{server_number}",
+                    f"{server_base}-MT5 {server_number}",
+                    f"{server_base} MT5 {server_number}"
                 ]
                 
-                # Tambahkan variasi dengan nomor server
-                for fmt in base_formats:
-                    server_variations.extend([
-                        f"{fmt} {server_number}",
-                        f"{fmt}-{server_number}",
-                        f"{fmt}{server_number}",
-                        f"{fmt} {server_number}",
-                        f"{fmt}-{server_number}-Demo",
-                        f"{fmt}-{server_number}-Live",
-                        f"{fmt} {server_number} Demo",
-                        f"{fmt} {server_number} Live"
-                    ])
-                
-                # Tambahkan variasi tanpa nomor server
-                server_variations.extend([
-                    base_server,
-                    f"{base_server}-Demo",
-                    f"{base_server}-Live",
-                    f"{base_server} Demo",
-                    f"{base_server} Live"
-                ])
-                
-                # Hapus duplikat dan string kosong
-                server_variations = list(set(filter(None, server_variations)))
-                
-                print("Mencoba variasi server:")
+                print("\nMencoba login dengan variasi server:")
                 for server in server_variations:
-                    print(f"Trying: {server}")
+                    print(f"\nTrying server: {server}")
                     try:
-                        if mt5.login(
+                        login_result = mt5.login(
                             login=self.mt5_config['login'],
                             password=self.mt5_config['password'],
-                            server=server
-                        ):
-                            print(f"✅ Berhasil login ke server: {server}")
-                            # Update nama server yang berhasil
+                            server=server,
+                            timeout=30000
+                        )
+                        
+                        if login_result:
+                            print(f"✅ Login berhasil ke server: {server}")
                             self.mt5_config['server'] = server
                             
-                            # Cek koneksi
                             account_info = mt5.account_info()
                             if account_info is not None:
+                                print("\n=== INFORMASI AKUN ===")
+                                print(f"Login: {account_info.login}")
+                                print(f"Server: {account_info.server}")
+                                print(f"Balance: ${account_info.balance}")
+                                print(f"Equity: ${account_info.equity}")
+                                print(f"Company: {account_info.company}")
                                 return True
+                                
                     except Exception as e:
-                        print(f"Failed with {server}: {str(e)}")
+                        print(f"❌ Error mencoba server {server}: {str(e)}")
                         continue
-                
-                raise Exception(f"Login gagal untuk semua variasi server")
-                
-            return False
+            
+            raise Exception("Gagal login ke semua variasi server")
             
         except Exception as e:
-            print(f"❌ MT5 initialization error: {e}")
+            print(f"\n❌ MT5 ERROR: {str(e)}")
+            print(f"Last MT5 Error: {mt5.last_error()}")
             return False
+            
+        finally:
+            print("\n=== SELESAI PROSES LOGIN ===")
 
     def check_mt5_connection(self):
         """
