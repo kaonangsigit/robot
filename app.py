@@ -99,9 +99,30 @@ class ForexGoldAnalyzer:
             'total_signals': 0
         }
         
+        # Status login
+        self.login_status = {
+            'is_logged_in': False,
+            'login_attempts': 0,
+            'last_login': None
+        }
+        
+        # Temporary storage untuk proses login
+        self.temp_credentials = {}
+        
         # Command handler untuk Telegram
         if self.notifications['telegram']['enabled']:
             self.setup_telegram_commands()
+        
+        # Kredensial MT5
+        self.mt5_config = {
+            'login': 12345678,  # Ganti dengan login ID Anda
+            'password': 'your_password',  # Ganti dengan password Anda
+            'server': 'MetaQuotes-Demo',  # Ganti dengan server broker Anda
+            'path': r'C:\Program Files\MetaTrader 5\terminal64.exe'  # Sesuaikan path MT5
+        }
+        
+        # Inisialisasi koneksi MT5
+        self.initialize_mt5()
 
     def initialize_telegram_bot(self):
         try:
@@ -444,32 +465,151 @@ Today's P/L: ${self.performance['daily_profit_loss']:.2f}
 
     def setup_telegram_commands(self):
         """
-        Setup command handler untuk Telegram
+        Update setup_telegram_commands dengan fitur login
         """
         try:
             bot = self.notifications['telegram']['bot']
             
-            @bot.message_handler(commands=['start'])
-            def send_welcome(message):
+            @bot.message_handler(commands=['login'])
+            def start_login(message):
                 if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    bot.reply_to(message, "❌ Maaf, Anda tidak memiliki akses ke bot ini.")
+                    bot.reply_to(message, "❌ Anda tidak memiliki akses.")
                     return
-                    
-                welcome_text = """
-🤖 Selamat datang di Bot Trading!
+                
+                if self.login_status['is_logged_in']:
+                    bot.reply_to(message, "⚠️ Sudah login ke MT5!")
+                    return
+                
+                # Reset temporary credentials
+                self.temp_credentials = {}
+                
+                # Minta login ID
+                msg = bot.reply_to(message, """
+🔐 Proses Login MT5
 
-Perintah yang tersedia:
-/run - Mulai auto trading
-/stop - Hentikan auto trading
-/status - Cek status bot
-/balance - Cek balance
-/positions - Cek posisi terbuka
-/history - Lihat history trading
-/report - Lihat laporan performa
-/settings - Lihat pengaturan bot
-/help - Bantuan
+Silakan kirim Login ID MT5 Anda:
+                """)
+                bot.register_next_step_handler(msg, process_login_id)
+
+            def process_login_id(message):
+                try:
+                    login_id = int(message.text.strip())
+                    self.temp_credentials['login'] = login_id
+                    
+                    # Minta password
+                    msg = bot.reply_to(message, """
+🔑 Masukkan Password MT5:
+(Pesan akan dihapus setelah diproses)
+                    """)
+                    bot.register_next_step_handler(msg, process_password)
+                    
+                except ValueError:
+                    bot.reply_to(message, "❌ Login ID harus berupa angka!")
+                    return
+
+            def process_password(message):
+                try:
+                    # Simpan password
+                    self.temp_credentials['password'] = message.text.strip()
+                    
+                    # Hapus pesan password untuk keamanan
+                    bot.delete_message(message.chat.id, message.message_id)
+                    
+                    # Minta nama server
+                    msg = bot.reply_to(message, """
+🏢 Masukkan Nama Server MT5:
+(Contoh: XMTrading-Demo, ICMarkets-Live)
+                    """)
+                    bot.register_next_step_handler(msg, process_server)
+                    
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {e}")
+                    return
+
+            def process_server(message):
+                try:
+                    # Simpan server
+                    self.temp_credentials['server'] = message.text.strip()
+                    
+                    # Update MT5 config
+                    self.mt5_config.update(self.temp_credentials)
+                    
+                    # Coba login
+                    login_result = self.initialize_mt5()
+                    
+                    if login_result:
+                        self.login_status['is_logged_in'] = True
+                        self.login_status['last_login'] = datetime.now()
+                        self.login_status['login_attempts'] = 0
+                        
+                        account_info = mt5.account_info()
+                        success_message = f"""
+✅ LOGIN MT5 BERHASIL!
+
+👤 Account: {account_info.login}
+💰 Balance: ${account_info.balance:.2f}
+💵 Equity: ${account_info.equity:.2f}
+🏢 Broker: {account_info.company}
+⚡️ Server: {self.mt5_config['server']}
+
+Kirim /start untuk melihat menu perintah.
+                        """
+                        bot.reply_to(message, success_message)
+                        
+                    else:
+                        self.login_status['login_attempts'] += 1
+                        bot.reply_to(message, """
+❌ Login gagal! 
+Silakan cek kembali kredensial Anda.
+Gunakan /login untuk mencoba lagi.
+                        """)
+                    
+                    # Hapus kredensial temporary
+                    self.temp_credentials = {}
+                    
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error: {e}")
+                    return
+
+            @bot.message_handler(commands=['logout'])
+            def logout_mt5(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                
+                if not self.login_status['is_logged_in']:
+                    bot.reply_to(message, "⚠️ Belum login ke MT5!")
+                    return
+                
+                try:
+                    mt5.shutdown()
+                    self.login_status['is_logged_in'] = False
+                    self.login_status['last_login'] = None
+                    bot.reply_to(message, "✅ Berhasil logout dari MT5!")
+                    
+                except Exception as e:
+                    bot.reply_to(message, f"❌ Error logout: {e}")
+
+            @bot.message_handler(commands=['status'])
+            def check_status(message):
+                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
+                    return
+                
+                # Update status untuk menampilkan info login
+                status = "🟢 Running" if self.bot_status['is_running'] else "🔴 Stopped"
+                login_status = "🟢 Connected" if self.login_status['is_logged_in'] else "🔴 Disconnected"
+                last_login = self.login_status['last_login'].strftime('%Y-%m-%d %H:%M:%S') if self.login_status['last_login'] else "Never"
+                
+                status_text = f"""
+📊 STATUS BOT TRADING
+
+Bot Status: {status}
+MT5 Connection: {login_status}
+Last Login: {last_login}
+Running Time: {datetime.now() - self.bot_status['start_time'] if self.bot_status['start_time'] else 'N/A'}
+Total Signals: {self.bot_status['total_signals']}
+Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 """
-                bot.reply_to(message, welcome_text)
+                bot.reply_to(message, status_text)
 
             @bot.message_handler(commands=['run'])
             def start_trading(message):
@@ -500,24 +640,6 @@ Perintah yang tersedia:
                     bot.reply_to(message, f"🛑 Bot dihentikan!\nDurasi: {duration}")
                 else:
                     bot.reply_to(message, "⚠️ Bot sedang tidak berjalan!")
-
-            @bot.message_handler(commands=['status'])
-            def check_status(message):
-                if str(message.chat.id) != self.notifications['telegram']['chat_id']:
-                    return
-                    
-                status = "🟢 Running" if self.bot_status['is_running'] else "🔴 Stopped"
-                duration = datetime.now() - self.bot_status['start_time'] if self.bot_status['start_time'] else "N/A"
-                
-                status_text = f"""
-📊 STATUS BOT TRADING
-
-Status: {status}
-Running Time: {duration}
-Total Signals: {self.bot_status['total_signals']}
-Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                """
-                bot.reply_to(message, status_text)
 
             @bot.message_handler(commands=['balance'])
             def check_balance(message):
@@ -586,15 +708,85 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
         except Exception as e:
             print(f"❌ Error setup telegram commands: {e}")
 
-    def run_auto_trading(self):
+    def initialize_mt5(self):
         """
-        Update fungsi run_auto_trading
+        Inisialisasi dan login ke MT5
         """
         try:
+            if not mt5.initialize(path=self.mt5_config['path']):
+                raise Exception("MT5 initialize() failed")
+                
+            # Login ke akun
+            if not mt5.login(
+                login=self.mt5_config['login'],
+                password=self.mt5_config['password'],
+                server=self.mt5_config['server']
+            ):
+                raise Exception("MT5 login failed")
+                
+            # Cek koneksi
+            account_info = mt5.account_info()
+            if account_info is None:
+                raise Exception("Failed to get account info")
+                
+            # Kirim notifikasi login berhasil
+            login_message = f"""
+✅ MT5 LOGIN BERHASIL
+
+👤 Account: {account_info.login}
+💰 Balance: ${account_info.balance:.2f}
+💵 Equity: ${account_info.equity:.2f}
+🏢 Broker: {account_info.company}
+⚡️ Server: {self.mt5_config['server']}
+            """
+            print(login_message)
+            self.send_telegram(login_message)
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"❌ MT5 initialization error: {e}"
+            print(error_msg)
+            self.send_telegram(error_msg)
+            return False
+
+    def check_mt5_connection(self):
+        """
+        Cek koneksi MT5 dan reconnect jika terputus
+        """
+        try:
+            if not mt5.terminal_info():
+                print("⚠️ MT5 connection lost. Attempting to reconnect...")
+                if not self.initialize_mt5():
+                    raise Exception("Failed to reconnect to MT5")
+                print("✅ MT5 reconnected successfully")
+                
+            return True
+        except Exception as e:
+            print(f"❌ MT5 connection error: {e}")
+            return False
+
+    def run_auto_trading(self):
+        """
+        Update run_auto_trading dengan pengecekan login
+        """
+        try:
+            if not self.login_status['is_logged_in']:
+                error_msg = "❌ Belum login ke MT5! Gunakan /login untuk login."
+                print(error_msg)
+                self.send_telegram(error_msg)
+                return
+                
             print("\n=== AUTO TRADING STARTED ===")
             last_report_time = datetime.now()
             
-            while self.bot_status['is_running']:  # Cek status bot
+            while self.bot_status['is_running']:
+                # Cek koneksi MT5
+                if not self.check_mt5_connection():
+                    print("⚠️ Waiting for MT5 connection...")
+                    time.sleep(60)  # Tunggu 1 menit sebelum mencoba lagi
+                    continue
+                
                 # Generate laporan harian
                 now = datetime.now()
                 if now.hour == 0 and (now - last_report_time).seconds > 3600:
@@ -658,7 +850,7 @@ Trailing Stop: {'Enabled' if self.trailing_params['enabled'] else 'Disabled'}
             error_msg = f"❌ Error dalam auto trading: {e}"
             print(error_msg)
             self.send_telegram(error_msg)
-            self.bot_status['is_running'] = False  # Stop bot jika error
+            self.bot_status['is_running'] = False
 
 def main():
     # Initialize MT5
@@ -669,10 +861,9 @@ def main():
     # Create analyzer instance
     analyzer = ForexGoldAnalyzer()
     
-    # Test Telegram connection
-    print("\nTesting Telegram connection...")
-    if analyzer.test_telegram_connection():
-        print("✅ Telegram connection successful!")
+    # Test koneksi MT5 dan Telegram
+    if analyzer.check_mt5_connection() and analyzer.test_telegram_connection():
+        print("\n✅ Semua koneksi berhasil!")
         
         # Start bot polling dalam thread terpisah
         import threading
@@ -690,12 +881,7 @@ def main():
                 time.sleep(1)
         except KeyboardInterrupt:
             print("\nProgram dihentikan")
-            
-    else:
-        print("❌ Telegram connection failed!")
-
-    # Shutdown MT5
-    mt5.shutdown()
+            mt5.shutdown()
 
 if __name__ == "__main__":
     main()
